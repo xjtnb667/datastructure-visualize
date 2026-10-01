@@ -36,8 +36,25 @@ const boards = computed<BoardView[]>(() => {
 })
 const tapes = computed<TapeView[]>(() => currentStep.value?.tapes ?? [])
 
-const TONE: Record<CellTone, string> = {
-  base: '#3f6fd8',
+/**
+ * 格子里的字**按宽度自动缩**。
+ *
+ * 格子宽度是固定的（CELL = 46），长文字会被撑出格子、挤到隔壁去 ——
+ * 十字链表表头的「同弧头链」「同弧尾链」就是这么和邻格叠在一起的。
+ * 中文按 1 个字宽、ASCII 按 0.56 个字宽估算，装不下就等比缩小字号（下限 8px）。
+ * 装得下时返回 undefined，交给 CSS 的默认字号。
+ */
+const CELL_INNER = 38
+function fitFont(text: string | undefined, base: number, inner = CELL_INNER): string | undefined {
+  if (!text) return undefined
+  let units = 0
+  for (const ch of text) units += /[\u2e80-\u9fff\uff00-\uffef]/.test(ch) ? 1 : 0.56
+  const need = units * base
+  if (need <= inner) return undefined
+  return `${Math.round(Math.max(8, inner / units) * 10) / 10}px`
+}
+
+const TONE: Record<CellTone, string> = {  base: '#3f6fd8',
   hot: '#8b5cf6',
   done: '#10b981',
   mark: '#ef4444',
@@ -176,8 +193,8 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
               background: toneColor(it.tone),
             }"
           >
-            <span class="cell-text">{{ it.text }}</span>
-            <span v-if="it.sub" class="cell-sub">{{ it.sub }}</span>
+            <span class="cell-text" :style="{ fontSize: fitFont(it.text, 15) }">{{ it.text }}</span>
+            <span v-if="it.sub" class="cell-sub" :style="{ fontSize: fitFont(it.sub, 9.5, 40) }">{{ it.sub }}</span>
           </span>
           <!-- 指针标签单独画在环外，z-index 抬高，免得被圆周上的格子盖住 -->
           <span
@@ -207,8 +224,8 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
                     class="cell-item"
                     :class="`slide-${slideOf(b, it)}`"
                   >
-                    <span class="cell-text">{{ it.text }}</span>
-                    <span v-if="it.sub" class="cell-sub">{{ it.sub }}</span>
+                    <span class="cell-text" :style="{ fontSize: fitFont(it.text, 15) }">{{ it.text }}</span>
+                    <span v-if="it.sub" class="cell-sub" :style="{ fontSize: fitFont(it.sub, 9.5, 40) }">{{ it.sub }}</span>
                   </span>
                 </TransitionGroup>
               </div>
@@ -226,7 +243,7 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
         <div
           v-else
           class="grid-box"
-          :class="[`layout-${b.layout}`, { 'has-ptr': hasPointers(b) }]"
+          :class="[`layout-${b.layout}`, { 'has-ptr': hasPointers(b), 'has-ptr-grid': hasPointers(b) && b.layout === 'grid' }]"
           :style="boardStyle(b)"
         >
           <svg
@@ -276,8 +293,8 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
                   class="cell-item"
                   :class="`slide-${slideOf(b, it)}`"
                 >
-                  <span class="cell-text">{{ it.text }}</span>
-                  <span v-if="it.sub" class="cell-sub">{{ it.sub }}</span>
+                  <span class="cell-text" :style="{ fontSize: fitFont(it.text, 15) }">{{ it.text }}</span>
+                  <span v-if="it.sub" class="cell-sub" :style="{ fontSize: fitFont(it.sub, 9.5, 40) }">{{ it.sub }}</span>
                 </span>
               </TransitionGroup>
             </div>
@@ -419,6 +436,16 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
   grid-template-columns: repeat(var(--cols), 46px);
   gap: 6px;
   width: max-content;
+}
+
+/*
+ * 网格里的指针标签挂在"格子上方 4px"处（见 .ptr-row / .ptr-grid 那段）。
+ * 行间距只有 6px，而标签有 17px 高，于是压进了上一行的格子里 ——
+ * 十字链表那类带指针的表格上，标签就会盖住上一行的内容。
+ * 这里把行间距撑开，标签正好落在两行之间的空档里。
+ */
+.layout-grid.has-ptr-grid {
+  row-gap: 24px;
 }
 
 .links {
