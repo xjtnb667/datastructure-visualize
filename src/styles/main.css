@@ -1,0 +1,379 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  background: #0b0e13;
+  color: #e6edf3;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * 深色滚动条。
+ * 浏览器默认的滚动条是浅灰白底，放在深色面板里非常突兀，
+ * 尤其算法下拉框那一列。这里全局统一成深色，代码区、链表区也一起受益。
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333c4a transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 用透明边框 + content-box 裁剪，把滑块做细一点 */
+::-webkit-scrollbar-thumb {
+  background: #333c4a;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a5563;
+  background-clip: content-box;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 12px;
+  padding: 14px;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  background: #12161d;
+  border: 1px solid #232a35;
+  border-radius: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  display: block;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.2px;
+}
+
+.pickers {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pickers label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: #8b949e;
+}
+
+.pickers select {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #e6edf3;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+/* ---------- 主体两栏 ---------- */
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 40%) 1fr;
+  gap: 12px;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #12161d;
+  border: 1px solid #232a35;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-bottom: 1px solid #232a35;
+  flex-wrap: wrap;
+}
+
+.pane-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.badge {
+  padding: 2px 9px;
+  font-size: 11.5px;
+  color: #9aa4b2;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 20px;
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 12px 12px;
+  overflow: hidden;
+}
+
+/* 动画区上方的图例（三种渲染器共用一套，内容随大类切换） */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 16px 2px;
+  font-size: 12.5px;
+  color: #8b949e;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+  flex: none;
+}
+
+/* 输入是固定串的算法（括号匹配、表达式求值），数据规模没有意义 */
+.topbar label.off {
+  opacity: 0.4;
+}
+
+/* ---------- 底部 ---------- */
+.bottom {
+  display: grid;
+  /* 左栏 = 解说 + 上/下一个算法；右栏 = 单步控制 + 进度条 */
+  grid-template-columns: minmax(460px, 1fr) minmax(540px, 1fr);
+  gap: 16px;
+  padding: 14px 18px;
+  background: #12161d;
+  border: 1px solid #232a35;
+  border-radius: 12px;
+}
+
+/* 左栏内部再横排：[解说内容(占满)] [上/下一个算法(靠右，紧邻单步控制)] */
+.explain {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.explain-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.explain-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.action-tag {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: #1f2733;
+  color: #9aa4b2;
+  border: 1px solid #2c3542;
+}
+
+.action-tag[data-action='compare'] {
+  background: rgba(245, 158, 11, 0.16);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.action-tag[data-action='swap'],
+.action-tag[data-action='set'] {
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.action-tag[data-action='sorted'],
+.action-tag[data-action='done'] {
+  background: rgba(16, 185, 129, 0.16);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.action-tag[data-action='mark'] {
+  background: rgba(139, 92, 246, 0.16);
+  color: #8b5cf6;
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.comment {
+  margin: 0;
+  font-size: 14px;
+  color: #d6dee8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip-var {
+  padding: 3px 9px;
+  font-size: 12px;
+  font-family: Consolas, Monaco, monospace;
+  color: #a9b6c6;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 6px;
+}
+
+.chip-var.stat {
+  color: #8b949e;
+}
+
+/* ---------- 通用按钮 ---------- */
+.btn {
+  padding: 8px 15px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #e6edf3;
+  background: #1f2733;
+  border: 1px solid #2f3947;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, transform 0.06s;
+}
+
+.btn:hover:not(:disabled) {
+  background: #28313f;
+  border-color: #3c4757;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  /* 不可点击时整体"发白/变浅"：底色收掉、边框和文字都淡下去，
+     比单纯降透明度更容易一眼看出"这个按钮现在点不了" */
+  color: #59636f;
+  background: #151a21;
+  border-color: #212832;
+  cursor: not-allowed;
+}
+
+.btn.play:disabled {
+  color: #59636f;
+  background: #151a21;
+  border-color: #212832;
+}
+
+.btn.play {
+  background: rgba(245, 197, 24, 0.14);
+  border-color: rgba(245, 197, 24, 0.45);
+  color: #f5c518;
+  font-weight: 600;
+}
+
+.btn.play:hover:not(:disabled) {
+  background: rgba(245, 197, 24, 0.22);
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.chip {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: #8b949e;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.chip.on {
+  color: #f5c518;
+  border-color: rgba(245, 197, 24, 0.5);
+  background: rgba(245, 197, 24, 0.12);
+}
+
+/* 窄屏：上下分栏 */
+@media (max-width: 1080px) {
+  .stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(240px, 1fr) minmax(280px, 1.1fr);
+  }
+
+  .bottom {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,15 @@
+node_modules
+dist
+*.local
+.vite
+.shots
+
+# 开发日志与临时产物
+*.log
+*.tmp
+*.tmpdir
+
+# 系统生成
+Thumbs.db
+.DS_Store
+desktop.ini
