@@ -6,6 +6,7 @@ import type {
   RendererKind,
   RunnerContext,
   TapeView,
+  TreeView,
 } from './types'
 
 const ascending = (a: number[]) => [...a].sort((x, y) => x - y)
@@ -48,6 +49,23 @@ function cloneTapes(tapes: TapeView[]): TapeView[] {
     // pad 千万别漏：字符串匹配靠它把模式串压在主串对应位置下面
     pad: t.pad,
   }))
+}
+
+/** 树快照同样要深拷贝：不然"上一步"看到的会是最后一步那棵树 */
+function cloneTree(tv: TreeView): TreeView {
+  return {
+    nodes: tv.nodes.map((n) => ({
+      ...n,
+      children: n.children ? [...n.children] : undefined,
+    })),
+    root: tv.root ?? null,
+    roots: tv.roots ? [...tv.roots] : undefined,
+    hot: [...(tv.hot ?? [])],
+    done: [...(tv.done ?? [])],
+    pointers: { ...(tv.pointers ?? {}) },
+    links: tv.links ? tv.links.map((l) => ({ ...l })) : undefined,
+    note: tv.note,
+  }
 }
 
 /**
@@ -99,6 +117,7 @@ export function buildSteps(
       vars: initVars,
       stats: stats(),
       list: spec.initList ? cloneList(spec.initList(seed, ctx)) : undefined,
+      tree: spec.initTree ? cloneTree(spec.initTree(seed, ctx)) : undefined,
       boards: initScene?.boards ? cloneBoards(initScene.boards) : undefined,
       tapes: initScene?.tapes ? cloneTapes(initScene.tapes) : undefined,
     },
@@ -122,6 +141,7 @@ export function buildSteps(
       sortedIndices: [...settled].sort((a, b) => a - b),
       range: event.range ? ([event.range[0], event.range[1]] as [number, number]) : undefined,
       list: event.list ? cloneList(event.list) : undefined,
+      tree: event.tree ? cloneTree(event.tree) : undefined,
       boards: event.boards ? cloneBoards(event.boards) : undefined,
       tapes: event.tapes ? cloneTapes(event.tapes) : undefined,
       comment: event.comment ?? '',
@@ -145,6 +165,7 @@ export function buildSteps(
       range: last.range,
       // 收尾帧要延续上一帧的结构画面，否则场景板子会凭空消失（校验也过不去）
       list: last.list ? cloneList(last.list) : undefined,
+      tree: last.tree ? cloneTree(last.tree) : undefined,
       boards: last.boards ? cloneBoards(last.boards) : undefined,
       tapes: last.tapes ? cloneTapes(last.tapes) : undefined,
       comment: `执行结束：共比较 ${compares} 次，移动/交换 ${moves} 次`,
@@ -263,6 +284,38 @@ export function validateSteps(
         if (t.pos !== undefined && (t.pos < -1 || t.pos >= t.items.length)) {
           throw new Error(`第 ${i} 步纸带「${t.label}」的游标 ${t.pos} 越界`)
         }
+      }
+    }
+  }
+
+  if (kind === 'tree') {
+    // 树：结点 id 必须自洽 —— 孩子 / 双亲 / 线索 / 指针指向的结点都得真实存在，
+    // 而且从根出发要能走遍所有结点（否则画面上会凭空少几棵子树）。
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]!
+      const tv = s.tree
+      if (!tv) throw new Error(`第 ${i} 步缺少树结构快照`)
+      const ids = new Set(tv.nodes.map((n) => n.id))
+      if (ids.size !== tv.nodes.length) throw new Error(`第 ${i} 步有重复的结点 id`)
+      const check = (id: string | null | undefined, what: string) => {
+        if (id !== null && id !== undefined && !ids.has(id)) {
+          throw new Error(`第 ${i} 步的${what}指向了不存在的结点 ${id}`)
+        }
+      }
+      for (const n of tv.nodes) {
+        check(n.left, `结点 ${n.id} 的左孩子`)
+        check(n.right, `结点 ${n.id} 的右孩子`)
+        check(n.parent, `结点 ${n.id} 的双亲`)
+        check(n.threadPrev, `结点 ${n.id} 的前驱线索`)
+        check(n.threadNext, `结点 ${n.id} 的后继线索`)
+        for (const c of n.children ?? []) check(c, `结点 ${n.id} 的孩子`)
+      }
+      check(tv.root ?? null, '根结点')
+      for (const r of tv.roots ?? []) check(r, '根结点')
+      for (const [name, id] of Object.entries(tv.pointers ?? {})) check(id, `指针 ${name}`)
+      for (const l of tv.links ?? []) {
+        check(l.from, '连线起点')
+        check(l.to, '连线终点')
       }
     }
   }

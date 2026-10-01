@@ -45,7 +45,7 @@ describe('所有已注册算法（步骤序列规范）', () => {
   })
 
   it('每个算法都声明了渲染器，且取值合法', () => {
-    const kinds: RendererKind[] = ['array', 'seqlist', 'linked', 'scene']
+    const kinds: RendererKind[] = ['array', 'seqlist', 'linked', 'scene', 'tree']
     for (const spec of algorithmRegistry) expect(kinds).toContain(spec.renderer)
   })
 

@@ -90,6 +90,18 @@ export const CATEGORIES: CategoryMeta[] = [
       { color: '#ef4444', label: '失配' },
     ],
   },
+  {
+    id: 'tree',
+    name: '树与二叉树',
+    summary: '遍历、线索化、树与森林、查找树与堆',
+    legend: [
+      { color: '#3f6fd8', label: '普通结点' },
+      { color: '#8b5cf6', label: '正在访问' },
+      { color: '#f59e0b', label: '线索 / 特殊连线' },
+      { color: '#10b981', label: '已访问 / 已就位' },
+      { color: '#ef4444', label: '将被删除 / 失衡点' },
+    ],
+  },
 ]
 
 export function getCategory(id: AlgoCategoryId): CategoryMeta {

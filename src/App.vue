@@ -6,6 +6,7 @@ import CanvasPanel from '@/components/CanvasPanel.vue'
 import SeqListPanel from '@/components/SeqListPanel.vue'
 import LinkedListPanel from '@/components/LinkedListPanel.vue'
 import ScenePanel from '@/components/ScenePanel.vue'
+import TreePanel from '@/components/TreePanel.vue'
 import ControlPanel from '@/components/ControlPanel.vue'
 import AlgorithmNav from '@/components/AlgorithmNav.vue'
 import AlgorithmPicker from '@/components/AlgorithmPicker.vue'
@@ -120,6 +121,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <CanvasPanel v-if="store.renderer === 'array'" />
           <SeqListPanel v-else-if="store.renderer === 'seqlist'" />
           <LinkedListPanel v-else-if="store.renderer === 'linked'" />
+          <TreePanel v-else-if="store.renderer === 'tree'" />
           <ScenePanel v-else />
         </div>
       </section>

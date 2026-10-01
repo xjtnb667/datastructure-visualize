@@ -1,6 +1,13 @@
 import { computed, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
-import type { AlgorithmSpec, AlgoStep, ListView, RendererKind, RunnerContext } from '@/core/types'
+import type {
+  AlgorithmSpec,
+  AlgoStep,
+  ListView,
+  RendererKind,
+  RunnerContext,
+  TreeView,
+} from '@/core/types'
 import { buildSteps } from '@/core/engine'
 import { getCategory } from '@/core/categories'
 import { DEFAULT_ALGORITHM_ID, getAlgorithm, getAlgorithmsByCategory } from '@/algorithms'
@@ -54,6 +61,8 @@ export const useAlgorithmStore = defineStore('algorithm', () => {
   const currentLine = computed(() => currentStep.value?.line ?? 0)
   const currentArray = computed(() => currentStep.value?.array ?? [])
   const currentList = computed<ListView | null>(() => currentStep.value?.list ?? null)
+  /** 当前这一帧的树结构（树 / 二叉树类算法用） */
+  const currentTree = computed<TreeView | null>(() => currentStep.value?.tree ?? null)
   const currentAction = computed(() => currentStep.value?.action ?? 'init')
   const currentComment = computed(() => currentStep.value?.comment ?? '')
   const currentVars = computed(() => currentStep.value?.vars ?? {})
@@ -253,6 +262,7 @@ export const useAlgorithmStore = defineStore('algorithm', () => {
     currentLine,
     currentArray,
     currentList,
+    currentTree,
     currentAction,
     currentComment,
     currentVars,

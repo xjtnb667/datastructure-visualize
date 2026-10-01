@@ -5,7 +5,7 @@
 export type StepAction = 'init' | 'mark' | 'compare' | 'swap' | 'set' | 'sorted' | 'done'
 
 /** 可视化形式：决定右侧用哪个渲染器 */
-export type RendererKind = 'array' | 'seqlist' | 'linked' | 'scene'
+export type RendererKind = 'array' | 'seqlist' | 'linked' | 'scene' | 'tree'
 
 /** 格子 / 结点的配色语义 */
 export type CellTone = 'base' | 'hot' | 'done' | 'mark' | 'dim'
@@ -96,6 +96,56 @@ export interface ListView {
   hasCycle?: boolean
 }
 
+/**
+ * 树 / 二叉树的一个结点快照。
+ *
+ * 一棵树用哪种形状表达，就看填了哪组字段：
+ *   二叉树     -> left / right
+ *   多叉树     -> children（孩子表示法、孩子兄弟表示法都塞这里；孩子兄弟表示法把
+ *                 "第一个孩子" 放 children[0]、"下一个兄弟" 放 children[1] 即可）
+ *   双亲表示法 -> parent（并查集也用它）
+ *   线索二叉树 -> threadPrev / threadNext
+ */
+export interface TreeNodeSnapshot {
+  id: string
+  value: number | string
+  left?: string | null
+  right?: string | null
+  children?: string[]
+  parent?: string | null
+  /** 中序前驱线索 */
+  threadPrev?: string | null
+  /** 中序后继线索 */
+  threadNext?: string | null
+  /** 可选：额外挂一个左/右线索标记（ltag / rtag） */
+  ltag?: boolean
+  rtag?: boolean
+  /** 结点下方的小字（位序、权值、下标…） */
+  sub?: string
+}
+
+/** 树类算法的结构快照 */
+export interface TreeView {
+  nodes: TreeNodeSnapshot[]
+  /** 根结点；森林用 roots 给多棵 */
+  root?: string | null
+  roots?: string[]
+  /** 本步重点高亮的结点 */
+  hot?: string[]
+  /** 已经走完 / 已就位的结点（画成绿色） */
+  done?: string[]
+  /** 命名指针：变量 -> 结点 id（画成指向结点的小标签） */
+  pointers?: Record<string, string | null>
+  /**
+   * 额外连线。父子实线由 left/right/children 自动画，这里只补两种特殊线：
+   *   thread = 中序线索（虚线）
+   *   parent = 双亲 / 并查集的向上指针
+   */
+  links?: Array<{ from: string; to: string; kind: 'thread' | 'parent' }>
+  /** 画面下方一句提示 */
+  note?: string
+}
+
 export interface AlgoStep {
   /** 该步骤对应的源码行号，1-based，必须落在 codeLines 范围内 */
   line: number
@@ -118,6 +168,8 @@ export interface AlgoStep {
   range?: [number, number]
   /** 链表类算法的结构快照 */
   list?: ListView
+  /** 树 / 二叉树类算法的结构快照 */
+  tree?: TreeView
   /**
    * 通用场景板（栈 / 队列 / 矩阵类算法用）。
    * 一次可以摆好几块 —— 比如对称矩阵要同时显示原矩阵和压缩后的一维表。
@@ -138,12 +190,25 @@ export interface AlgoStep {
  * indices / sortedIndices / stats 由 engine 补齐。
  */
 export type AlgoEvent = Pick<AlgoStep, 'line' | 'action' | 'array'> &
-  Partial<Pick<AlgoStep, 'indices' | 'comment' | 'vars' | 'range' | 'list' | 'boards' | 'tapes'>>
+  Partial<
+    Pick<
+      AlgoStep,
+      'indices' | 'comment' | 'vars' | 'range' | 'list' | 'boards' | 'tapes' | 'tree'
+    >
+  >
 
 export type AlgoRunner = Generator<AlgoEvent, void, void>
 
 /** 算法大类（SRS FR-03：算法按大类 → 子类组织，可继续扩展） */
-export type AlgoCategoryId = 'sort' | 'search' | 'linear' | 'stack' | 'queue' | 'matrix' | 'string'
+export type AlgoCategoryId =
+  | 'sort'
+  | 'search'
+  | 'linear'
+  | 'stack'
+  | 'queue'
+  | 'matrix'
+  | 'string'
+  | 'tree'
 
 export interface LegendItem {
   color: string
@@ -210,6 +275,11 @@ export interface AlgorithmSpec {
    * 所以链表算法要把初始链表结构在这里提供给 engine，否则第一帧画不出东西。
    */
   initList?: (data: number[], ctx: RunnerContext) => ListView
+  /**
+   * 树类算法的**首帧**结构快照。
+   * 同 initList / initScene：首帧由 engine 造，不在这里给的话第一帧是空画面。
+   */
+  initTree?: (data: number[], ctx: RunnerContext) => TreeView
   /**
    * 场景类算法（栈 / 队列 / 矩阵 / 字符串）的首帧画面。
    * 同样是因为首帧由 engine 造，不在这里提供的话第一帧画不出东西。

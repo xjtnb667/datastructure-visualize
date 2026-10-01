@@ -20,6 +20,7 @@ import { stackMoreSpecs } from './stackMore'
 import { queueSpecs } from './queue'
 import { matrixSpecs } from './matrix'
 import { stringMatchSpecs } from './stringMatch'
+import { treeSpecs } from './treeTraverse'
 
 /**
  * 算法注册表（SRS EF-09 可扩展性）。
@@ -62,6 +63,8 @@ export const algorithmRegistry: AlgorithmSpec[] = [
   ...matrixSpecs,
   // 串 · 模式匹配 / next 数组
   ...stringMatchSpecs,
+  // 树与二叉树
+  ...treeSpecs,
 ]
 
 export function getAlgorithm(id: string): AlgorithmSpec {
