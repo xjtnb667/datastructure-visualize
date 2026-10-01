@@ -379,6 +379,14 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
   padding-top: 24px;
 }
 
+/*
+ * 连线层是绝对定位在 top:0 的，上面加了 24px 内边距之后它会跟着错位
+ * （箭头整体上移、掉进行与行之间的缝里）。这里让它跟着往下挪 24px 对齐。
+ */
+.grid-box.has-ptr > .links {
+  top: 24px;
+}
+
 .layout-row {
   flex-direction: row;
   flex-wrap: wrap;
