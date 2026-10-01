@@ -488,8 +488,33 @@ describe('栈：进出栈的步骤粒度', () => {
   })
 })
 
-describe('串 · 模式匹配', () => {
-  // 例子：主串 ABABCABCACBAB，模式串 ABCAC —— 匹配成功位置是第 6 个字符
+describe('线索二叉树：线索不能一帧有一帧没有', () => {
+  it('中序线索化：线索条数只增不减（累积性的东西不能被漏掉一帧）', () => {
+    const spec = getAlgorithm('thread-inorder')
+    const steps = buildSteps(spec, spec.defaultData(), {})
+    const counts = steps.slice(1).map((s) => s.tree?.links?.length ?? 0)
+    for (let i = 1; i < counts.length; i++) {
+      expect(
+        counts[i]!,
+        `第 ${i + 1} 步线索从 ${counts[i - 1]} 条掉到 ${counts[i]} 条 —— 有帧漏传了 links`,
+      ).toBeGreaterThanOrEqual(counts[i - 1]!)
+    }
+    expect(counts.at(-1)).toBeGreaterThan(0)
+  })
+
+  it('线索二叉树的遍历：每一帧都能看到线索', () => {
+    const spec = getAlgorithm('thread-traverse')
+    const steps = buildSteps(spec, spec.defaultData(), {})
+    for (let i = 1; i < steps.length; i++) {
+      expect(
+        steps[i]!.tree?.links?.length ?? 0,
+        `第 ${i + 1} 步一条线索都没有`,
+      ).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('串 · 模式匹配', () => {  // 例子：主串 ABABCABCACBAB，模式串 ABCAC —— 匹配成功位置是第 6 个字符
   const arrOf = (id: string, title: string): string[] => {
     const spec = getAlgorithm(id)
     const steps = buildSteps(spec, spec.defaultData(), {})

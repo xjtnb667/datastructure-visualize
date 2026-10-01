@@ -191,7 +191,12 @@ function* runThreadInorder(data: number[]): AlgoRunner {
 
   const val = (id: string | null | undefined): string => (id ? String(byId.get(id)?.value ?? '?') : 'NULL')
   const vals = (): number[] => order.map((id) => Number(byId.get(id)!.value))
-  const snap = (o: ViewOpts = {}): TreeView => treeView(tagNodes(nodes), o)
+  /*
+   * snap 默认把"目前累积到的线索"带上（links: [...links]）。
+   * 之前靠每个 yield 自己写 links，结果"进入结点、先线索化左子树"那一帧忘了写，
+   * 橙虚线就闪没一帧、下一步又回来 —— 累积性的东西必须由 snap 统一兜底。
+   */
+  const snap = (o: ViewOpts = {}): TreeView => treeView(tagNodes(nodes), { links: [...links], ...o })
   const vars = () => ({ n: nodes.length, 中序序号: order.length, 线索条数: links.length })
   const seqText = () => order.map((id) => byId.get(id)!.value).join(' → ')
 
@@ -388,12 +393,13 @@ const CODE_THREAD_TRAVERSE = [
 ]
 
 function* runThreadTraverse(data: number[]): AlgoRunner {
-  const { nodes, byId } = buildThreadedTree(data)
+  // links 必须一起解构出来：这是线索本身，不带上画面就一条橙虚线都没有
+  const { nodes, byId, links } = buildThreadedTree(data)
   const visited: string[] = []
 
   const val = (id: string | null | undefined): string => (id ? String(byId.get(id)?.value ?? '?') : 'NULL')
   const vals = (): number[] => visited.map((id) => Number(byId.get(id)!.value))
-  const snap = (o: ViewOpts = {}): TreeView => treeView(tagNodes(nodes), o)
+  const snap = (o: ViewOpts = {}): TreeView => treeView(tagNodes(nodes), { links: [...links], ...o })
   const vars = () => ({ n: nodes.length, 遍历序号: visited.length })
   const seqText = () => visited.map((id) => byId.get(id)!.value).join(' → ')
 
