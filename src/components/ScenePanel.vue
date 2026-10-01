@@ -19,7 +19,21 @@ import type { BoardView, CellTone, TapeView } from '@/core/types'
 const store = useAlgorithmStore()
 const { currentStep } = storeToRefs(store)
 
-const boards = computed<BoardView[]>(() => currentStep.value?.boards ?? [])
+/**
+ * 只渲染指定位置的板子。
+ * 树类算法会把板子摆到树的上下两边（哈夫曼构造的"游离结点池"就在树上面），
+ * 所以同一个面板里会出现两个 ScenePanel，各自负责一边。
+ * 不传 = 全都渲染（普通场景类算法用）。
+ */
+const props = defineProps<{ only?: 'top' | 'bottom' }>()
+
+const boards = computed<BoardView[]>(() => {
+  const all = currentStep.value?.boards ?? []
+  if (!props.only) return all
+  return all.filter((b) =>
+    props.only === 'top' ? b.position === 'top' : b.position !== 'top',
+  )
+})
 const tapes = computed<TapeView[]>(() => currentStep.value?.tapes ?? [])
 
 const TONE: Record<CellTone, string> = {

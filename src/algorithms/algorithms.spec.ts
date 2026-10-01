@@ -3,7 +3,13 @@ import { algorithmRegistry, getAlgorithm, getAlgorithmsByCategory, getGroupedByC
 import { buildSteps, validateSteps } from '@/core/engine'
 import { CATEGORIES } from '@/core/categories'
 import { SEQ_CAPACITY } from '@/core/config'
-import type { AlgorithmSpec, RendererKind, RunnerContext } from '@/core/types'
+import type {
+  AlgoCategoryId,
+  AlgorithmSpec,
+  AlgoStep,
+  RendererKind,
+  RunnerContext,
+} from '@/core/types'
 
 const ascending = (a: number[]) => [...a].sort((x, y) => x - y)
 
@@ -22,6 +28,57 @@ function ctxOf(spec: AlgorithmSpec, input: number[], target?: number): RunnerCon
 function prepared(spec: AlgorithmSpec): number[] {
   const raw = spec.defaultData()
   return spec.prepareData ? spec.prepareData(raw) : raw
+}
+
+/** 某一帧的树快照 */
+type TreeSnapshot = NonNullable<AlgoStep['tree']>
+
+/**
+ * 把一棵树快照按左右孩子递归走一遍，返回：
+ *   inorder —— 中序序列（二叉排序树 / AVL 里必须**严格升序**，旋转、插入、删除写错都会在这里露出来）
+ *   bfs     —— 每个结点的平衡因子（子树高之差，当场按结构现算，不看画面上的小字）
+ * 这是树结构算法自己的判据：它们命中的是"结点"，没有数组下标可用。
+ */
+function walkTree(view: TreeSnapshot): {
+  inorder: number[]
+  bfs: Array<{ value: number | string; bf: number }>
+} {
+  const byId = new Map(view.nodes.map((n) => [n.id, n]))
+  const inorder: number[] = []
+  const bfs: Array<{ value: number | string; bf: number }> = []
+
+  const heightOf = (id: string | null | undefined): number => {
+    if (!id) return 0
+    const node = byId.get(id)
+    if (!node) return 0
+    const lh = heightOf(node.left)
+    const rh = heightOf(node.right)
+    bfs.push({ value: node.value, bf: lh - rh })
+    return Math.max(lh, rh) + 1
+  }
+  const inorderOf = (id: string | null | undefined): void => {
+    if (!id) return
+    const node = byId.get(id)
+    if (!node) return
+    inorderOf(node.left)
+    inorder.push(Number(node.value))
+    inorderOf(node.right)
+  }
+
+  heightOf(view.root)
+  inorderOf(view.root)
+  return { inorder, bfs }
+}
+
+/** 大根堆判定（下标 0 开始）：每个结点都不小于它的两个孩子 */
+function isMaxHeap(a: number[]): boolean {
+  for (let i = 0; i < a.length; i++) {
+    const l = 2 * i + 1
+    const r = 2 * i + 2
+    if (l < a.length && a[i]! < a[l]!) return false
+    if (r < a.length && a[i]! < a[r]!) return false
+  }
+  return true
 }
 
 /**
@@ -93,18 +150,66 @@ describe('所有已注册算法（步骤序列规范）', () => {
 })
 
 describe('排序类算法', () => {
-  for (const spec of getAlgorithmsByCategory('sort')) {
-    it(`${spec.name}：终态有序，且元素守恒`, () => {
+  const sortSpecs = getAlgorithmsByCategory('sort')
+  /*
+   * 排序大类下现在住着两种东西，它们的"有序"不是一回事，断言必须分开：
+   *   ① 数组类排序（renderer === 'array'）：整条序列就是一个数组，终态必然**整体升序**；
+   *   ② 堆（group === '堆'，renderer === 'scene'）：数组是堆的层序存储，只保证"父 ≥ 子"这个**偏序**，
+   *      大根堆 [10, 8, 9, 7, ...] 本身并不是升序的 —— 之前就是拿"升序"去卡堆才红的。
+   */
+  const arraySorts = sortSpecs.filter((s) => s.renderer === 'array')
+  const heapSpecs = sortSpecs.filter((s) => s.group === '堆')
+
+  it('数组类排序和堆两拨都非空，且排序大类里没有算法落在筛选条件之外', () => {
+    // 这条守的是"筛选条件写错导致下面两组变成空跑"：两拨都得有货，且合起来就是整个大类
+    expect(arraySorts.length).toBeGreaterThan(0)
+    expect(heapSpecs.length).toBeGreaterThan(0)
+    for (const spec of sortSpecs) {
+      expect(
+        arraySorts.includes(spec) || heapSpecs.includes(spec),
+        `${spec.name} 既不是数组类排序，也不在「堆」子类里 —— 下面两组用例都会漏掉它`,
+      ).toBe(true)
+    }
+  })
+
+  for (const spec of arraySorts) {
+    it(`${spec.name}：终态升序有序，且元素守恒`, () => {
       const input = prepared(spec)
       const steps = buildSteps(spec, input, ctxOf(spec, input))
       expect(steps.at(-1)!.array).toEqual(ascending(input))
       expect(steps.at(-1)!.array).toHaveLength(input.length)
     })
   }
+
+  for (const spec of heapSpecs) {
+    it(`${spec.name}：终态是合法的大根堆（父 ≥ 子），堆顶是最大值，且元素守恒`, () => {
+      const input = prepared(spec)
+      const final = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!.array
+
+      // 堆的"有序"是偏序：每个结点 ≥ 它的两个孩子。整体升序在堆上根本不成立
+      expect(isMaxHeap(final), `终态 [${final.join(', ')}] 里存在比孩子还小的双亲`).toBe(true)
+      expect(final[0], '大根堆的堆顶必须是整个数组的最大值').toBe(Math.max(...input))
+      expect([...final].sort((x, y) => x - y), '堆只换位置，不能多出 / 少掉元素').toEqual(
+        ascending(input),
+      )
+      expect(final).toHaveLength(input.length)
+    })
+  }
 })
 
 describe('查找类算法', () => {
   const searchSpecs = getAlgorithmsByCategory('search')
+  /*
+   * 查找大类下也是两种东西，验收方式完全不同，不能再混用一套断言：
+   *   ① 数组上的查找（renderer === 'array' 且有 defaultTarget）：命中的是**一个下标**，
+   *      所以能用 indices / sortedIndices / "命中"解说词来判；
+   *   ② 树上的查找（BST / AVL，renderer === 'tree'）：命中的是**一个结点**，
+   *      它们没有 defaultTarget（bst-insert / bst-delete / AVL 四条旋转压根没有目标值），
+   *      也没有"命中下标"这回事 —— 之前就是硬套数组断言才红的。
+   */
+  const targetSearches = searchSpecs.filter((s) => !!s.defaultTarget)
+  const arraySearches = targetSearches.filter((s) => s.renderer === 'array')
+  const treeSearches = searchSpecs.filter((s) => s.renderer === 'tree')
 
   it('至少实现了顺序查找与折半查找', () => {
     const ids = searchSpecs.map((s) => s.id)
@@ -112,7 +217,19 @@ describe('查找类算法', () => {
     expect(ids).toContain('binary-search')
   })
 
-  for (const spec of searchSpecs) {
+  it('数组查找和树查找两拨都非空，且查找大类里没有算法落在筛选条件之外', () => {
+    // 同上：防"筛选条件写错 -> 下面几组空跑"
+    expect(arraySearches.length).toBeGreaterThan(0)
+    expect(treeSearches.length).toBeGreaterThan(0)
+    for (const spec of searchSpecs) {
+      expect(
+        arraySearches.includes(spec) || treeSearches.includes(spec),
+        `${spec.name} 既不是数组上的查找，也不是树上的查找 —— 下面几组用例都会漏掉它`,
+      ).toBe(true)
+    }
+  })
+
+  for (const spec of arraySearches) {
     it(`${spec.name}：对首/中/尾三个目标值都能命中到正确的下标`, () => {
       const input = prepared(spec)
       for (const idx of [0, Math.floor(input.length / 2), input.length - 1]) {
@@ -126,13 +243,79 @@ describe('查找类算法', () => {
         expect(hit.sortedIndices).toEqual([idx]) // 只有命中那一格是绿的
       }
     })
+  }
 
+  // defaultTarget 是"首帧就替用户选好的目标值"：树上的查找也有（bst-search），
+  // 所以这里按"有没有 defaultTarget"筛，而不是按大类筛
+  for (const spec of targetSearches) {
     it(`${spec.name}：defaultTarget 一定取自数据本身`, () => {
       const input = prepared(spec)
       expect(spec.defaultTarget).toBeTruthy()
       for (let k = 0; k < 30; k++) expect(input).toContain(spec.defaultTarget!(input))
     })
   }
+
+  // ---- 树上的查找：用"树"自己的性质验收，不再硬套数组下标 ----
+  for (const spec of treeSearches) {
+    it(`${spec.name}：终态是一棵合法的二叉排序树（中序严格升序，且逻辑序列与树结构一致）`, () => {
+      const input = prepared(spec)
+      const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
+      expect(last.action).toBe('done')
+
+      const { inorder } = walkTree(last.tree!)
+      expect(inorder.length, '末帧树上一个结点都没有').toBeGreaterThan(0)
+      // BST 的判据：中序序列必须严格升序；旋转 / 删除写错时这里一定会露出来
+      expect(inorder).toEqual(ascending(inorder))
+      expect(new Set(inorder).size, '树上出现了重复的关键字').toBe(inorder.length)
+      // array 字段是"逻辑顺序"，树类算法里它就该是中序序列
+      expect(last.array).toEqual(inorder)
+    })
+  }
+
+  for (const spec of searchSpecs.filter((s) => s.group === '二叉排序树')) {
+    it(`${spec.name}：树上的关键字全部来自数据本身`, () => {
+      const input = prepared(spec)
+      const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
+      const { inorder } = walkTree(last.tree!)
+      expect(inorder.length).toBeGreaterThan(0)
+      for (const v of inorder) expect(input, `树上出现了数据里没有的关键字 ${v}`).toContain(v)
+    })
+  }
+
+  for (const spec of searchSpecs.filter((s) => s.group === '平衡二叉树 AVL')) {
+    it(`${spec.name}：旋转之后每个结点的 |平衡因子| 都 ≤ 1（旋转真的做完了）`, () => {
+      const input = prepared(spec)
+      const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
+      const { inorder, bfs } = walkTree(last.tree!)
+
+      expect(bfs.length, '有结点没算到平衡因子').toBe(inorder.length)
+      for (const n of bfs) {
+        expect(Math.abs(n.bf), `结点 ${n.value} 的平衡因子是 ${n.bf}`).toBeLessThanOrEqual(1)
+      }
+      // 旋转只调结构、不丢结点：失衡前 5 个 + 新插入的 1 个 = sizes 里声明的规模
+      expect(inorder).toHaveLength(spec.sizes![0]!)
+    })
+  }
+
+  it('二叉排序树·查找：命中是在树上标绿那个结点，落空是一路走到 NULL', () => {
+    const spec = getAlgorithm('bst-search')
+    const input = prepared(spec)
+    const target = input[Math.floor(input.length / 2)]! // 中间的键一定在树里
+    const steps = buildSteps(spec, input, ctxOf(spec, input, target))
+
+    // 「只标绿一个结点」的帧就是命中帧（收尾帧是把整棵树都标绿的那一帧，不算）
+    const hitFrame = steps.find((s) => (s.tree?.done ?? []).length === 1)
+    expect(hitFrame, '全程都没有出现"只标绿一个结点"的命中帧').toBeTruthy()
+    const hitId = hitFrame!.tree!.done![0]!
+    const hitNode = hitFrame!.tree!.nodes.find((n) => n.id === hitId)!
+    expect(hitNode.value).toBe(target)
+    expect(hitFrame!.comment).toContain('查找成功')
+    expect(hitFrame!.tree!.note, '命中帧应该点明"绿色 = 命中的结点"').toContain('命中')
+
+    const missFrame = steps.find((s) => s.tree?.pointers?.p === null)
+    expect(missFrame, '只演了命中，没演"走到 NULL"的落空分支').toBeTruthy()
+    expect(missFrame!.comment).toContain('NULL')
+  })
 
   it('折半查找：候选区间单调收窄，且明显快于顺序查找', () => {
     const spec = getAlgorithm('binary-search')
@@ -428,9 +611,35 @@ describe('两级选择器的分组数据', () => {
     expect(flat).toEqual(getAlgorithmsByCategory('linear').map((i) => i.id))
   })
 
-  it('排序和查找没有子类，就是一个空标题的组', () => {
-    expect(getGroupedByCategory('sort')).toHaveLength(1)
-    expect(getGroupedByCategory('sort')[0]!.group).toBe('')
+  it('每个大类的子类分组都聚合正确：组不空、组内同 group、拼起来就是整个大类', () => {
+    for (const cat of CATEGORIES) {
+      const all = getAlgorithmsByCategory(cat.id)
+      const groups = getGroupedByCategory(cat.id)
+
+      expect(groups.length, `${cat.name} 一组都没有`).toBeGreaterThan(0)
+      for (const g of groups) {
+        expect(g.items.length, `子类「${g.group || '（无子类）'}」是空的`).toBeGreaterThan(0)
+        // 组里的每一项都必须真的是这个子类的成员，否则选择器会把它挂到别的标题下面
+        for (const item of g.items) expect(item.group ?? '').toBe(g.group)
+      }
+      // 分完组再拉平，顺序必须和注册顺序一模一样（选择器第二列就按这个顺序排）
+      expect(groups.flatMap((g) => g.items.map((s) => s.id))).toEqual(all.map((s) => s.id))
+    }
+  })
+
+  it('排序和查找现在也有子类了：「堆」是排序的子类，BST / AVL 是查找的子类', () => {
+    const groupsOf = (cat: AlgoCategoryId) => getGroupedByCategory(cat).map((g) => g.group)
+    // 冒泡 / 选择 / 插入没有子类，一起排在空标题那一组；堆单独算一组
+    expect(groupsOf('sort')).toEqual(['', '堆'])
+    // 顺序查找 / 折半查找没有子类；二叉排序树与平衡二叉树 AVL 各是一组
+    expect(groupsOf('search')).toEqual(['', '二叉排序树', '平衡二叉树 AVL'])
+
+    // 子类标题不是摆设：这两个大类里带名字的子类都得真的装着算法
+    for (const cat of ['sort', 'search'] as const) {
+      const named = getGroupedByCategory(cat).filter((g) => g.group !== '')
+      expect(named.length, `${cat} 大类的子类不见了`).toBeGreaterThan(0)
+      for (const g of named) expect(g.items.length, `子类「${g.group}」空着`).toBeGreaterThan(0)
+    }
   })
 })
 
@@ -511,6 +720,31 @@ describe('线索二叉树：线索不能一帧有一帧没有', () => {
         `第 ${i + 1} 步一条线索都没有`,
       ).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('孩子表示法：画出来的链表顺序必须和代码的头插法一致', () => {
+  it('链头是最后插入的那个孩子（不是最先插入的）', () => {
+    const spec = getAlgorithm('tree-child-repr')
+    const steps = buildSteps(spec, spec.defaultData(), {})
+    const last = steps.at(-1)!
+    const board = last.boards!.find((b) => b.title.includes('孩子'))!
+    const cols = board.cols!
+    const nodes = last.tree!.nodes
+    let checked = 0
+    for (let i = 0; i < nodes.length; i++) {
+      const inserted = (nodes[i]!.children ?? []).map((c) => Number(c.slice(1)))
+      if (!inserted.length) continue
+      // 该行第 1..len 格就是这条孩子链表
+      const shown = inserted.map((_, k) => board.items[i * cols + 1 + k]!.text)
+      const expected = inserted
+        .slice()
+        .reverse()
+        .map((j) => String(j))
+      expect(shown, `下标 ${i} 的孩子链表顺序不对（头插法应该是 ${expected.join('→')}）`).toEqual(expected)
+      checked++
+    }
+    expect(checked).toBeGreaterThan(0)
   })
 })
 

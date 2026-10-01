@@ -35,6 +35,11 @@ export interface CellItem {
 export interface BoardView {
   /** 板子上方的小标题 */
   title: string
+  /**
+   * 画在树的哪一边。树类算法的场景里 'top' = 放在树**上方**
+   * （哈夫曼构造的"游离结点池"就摆在树上面），默认 'bottom' 放在树下方。
+   */
+  position?: 'top' | 'bottom'
   layout: 'row' | 'column' | 'grid' | 'ring'
   /** grid 布局的列数 */
   cols?: number
@@ -254,6 +259,15 @@ export interface AlgorithmSpec {
    * 长度不是平方数的话会有一截数据用不上，界面上"数据规模"也只给平方数。
    */
   squareInput?: boolean
+  /**
+   * 这个算法**真正支持**的「数据规模」候选值。
+   *
+   * 有些算法的形状是定死的（AVL 的 LL/RR/LR/RL 必须是"插完刚好失衡"的最小形状，
+   * 并查集的分组也是固定的），让它假装支持 5..12 只会画出和标注对不上的画面。
+   * 填了这里，下拉框就只显示这些值 —— **不支持的就别让用户选到**。
+   * 不填则用全局默认（5..12）。
+   */
+  sizes?: number[]
   /** 首帧解说词。首帧由 engine 造，想说得具体一点就填这里 */
   initComment?: (data: number[], ctx: RunnerContext) => string
   /**

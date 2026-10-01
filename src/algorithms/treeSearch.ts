@@ -7,7 +7,7 @@ import type {
   TreeNodeSnapshot,
   TreeView,
 } from '@/core/types'
-import { nodeId } from './treeTraverse'
+import { nodeId, TREE_SIZES } from './treeTraverse'
 
 /**
  * 树与二叉树 —— 二叉排序树（BST）与平衡二叉树（AVL）。
@@ -15,12 +15,14 @@ import { nodeId } from './treeTraverse'
  * 数据约定
  * --------
  * 一维数字串在这里代表"树上所有结点的关键字"：
- *   1. 先**去重、升序**排好，得到"值池"；
+ *   1. 先去重、升序排好 —— 重复的值往后挪一点，保证**一个数据一个结点**，
+ *      所以"数据规模 = 树上的结点数"（选 12 个数据就是 12 个结点）；
  *   2. 再按**对半取中**的顺序插入，建成一棵左右均匀的二叉排序树；
- *   3. 于是树的中序序列**恰好就等于值池**（BST 的中序天然升序），
+ *   3. 于是树的中序序列**恰好就等于这串关键字**（BST 的中序天然升序），
  *      所以每一步的 array 都取"当前树的中序序列"，底部数据栏始终有意义。
- * 演示用的插入值 / 删除值都不是写死的常量，而是**从值池里推出来的**
- * （例如"取两个相邻关键字中间的空位"），所以点「随机数据」也能演出同样的效果。
+ * 演示用的插入值 / 查找目标都不是写死的常量，而是**从数据里推出来的**
+ * （插入取"插进去路径最绕"的那个关键字，查找失败取两个相邻关键字中间的空位），
+ * 所以点「随机数据」也能演出同样的效果。
  *
  * 快照约定
  * --------
@@ -377,6 +379,59 @@ export function pickSearchTarget(t: Bst): number {
   return t.nodes.get(bestId)!.v
 }
 
+/**
+ * 数据 -> **恰好 data.length 个**互不相同、升序排好的关键字。
+ *
+ * BST 里不放重复的关键字，去重本来是对的；但去掉一个重复值，画面上就少一个结点，
+ * 于是"选了 12 个数据、树里只有 11 个"——数据和画面对不上。
+ * 这里改成重复的值往后挪一点（30、30 -> 30、31），保证**一个数据一个结点**。
+ */
+export function distinctKeys(data: number[]): number[] {
+  const out: number[] = []
+  for (const v of data.filter((x) => Number.isFinite(x)).sort((a, b) => a - b)) {
+    const prev = out[out.length - 1]
+    out.push(prev === undefined || v > prev ? v : prev + 1)
+  }
+  // 空数据给一个兜底值：后面的代码都要从根结点开始走，不能没有结点
+  return out.length ? out : [50]
+}
+
+/**
+ * 演示"插入"时要用的两样东西：先在树上摆好 n-1 个关键字（base），
+ * 剩下的那一个（key）才是插进去的 —— 插完树上正好 n 个结点 = 数据规模。
+ *
+ * key 不是随手取最后一个，而是**挑**出来的：拿它插进 base 以后，
+ * 比较路径最长、而且左右都拐过弯，演示效果最好。
+ */
+function planInsert(keys: number[]): { base: number[]; key: number } {
+  if (keys.length <= 1) return { base: [], key: keys[0] ?? 50 }
+  let best: { base: number[]; key: number; score: number } | null = null
+  for (let k = 0; k < keys.length; k++) {
+    const base = keys.filter((_, i) => i !== k)
+    const key = keys[k]!
+    const t = balancedBst(base)
+    let cur = t.root
+    let steps = 0
+    let left = false
+    let right = false
+    while (cur !== null) {
+      const node = t.nodes.get(cur)!
+      steps += 1
+      if (key === node.v) break
+      if (key < node.v) {
+        left = true
+        cur = node.left
+      } else {
+        right = true
+        cur = node.right
+      }
+    }
+    const score = steps * 10 + (left && right ? 100 : 0)
+    if (!best || score > best.score) best = { base, key, score }
+  }
+  return { base: best!.base, key: best!.key }
+}
+
 // ===========================================================================
 // 四、二叉排序树 · 插入
 // ===========================================================================
@@ -394,12 +449,14 @@ const BST_INSERT_CODE = [
 ]
 
 function* runBstInsert(data: number[], ctx: RunnerContext = {}): AlgoRunner {
-  const pool = valuePool(data, 3)
-  const t = balancedBst(pool)
-  const rootV = t.nodes.get(t.root!)!.v
-  /** 要插入的关键字：外部传了就用外部的（但不能是树上已有的），否则取根附近的一个空位 */
-  const planned = pickGapKey(pool, rootV)
-  const key = ctx.value !== undefined && !treeHas(t, ctx.value) ? ctx.value : planned
+  const keys = distinctKeys(data)
+  // 数据里的 n 个关键字：先在树上摆好 n-1 个，把挑出来的那一个插进去，插完正好 n 个结点
+  const { base, key: planned } = planInsert(keys)
+  const t = balancedBst(base)
+  const rootV = t.root === null ? null : t.nodes.get(t.root)!.v
+  /** 要插入的关键字：外部传了就用外部的（但不能是树上已有的），否则用挑出来的那一个 */
+  const key =
+    ctx.value !== undefined && Number.isFinite(ctx.value) && !treeHas(t, ctx.value) ? ctx.value : planned
 
   const frame = (
     line: number,
@@ -410,7 +467,8 @@ function* runBstInsert(data: number[], ctx: RunnerContext = {}): AlgoRunner {
   ): AlgoEvent => ({
     line,
     action,
-    array: inorderValues(t),
+    // 数据条一直显示数据里的全部关键字（n 个），不跟着树的增删变长变短
+    array: keys.slice(),
     tree: treeOf(t, opts),
     comment,
     vars,
@@ -419,9 +477,13 @@ function* runBstInsert(data: number[], ctx: RunnerContext = {}): AlgoRunner {
   yield frame(
     1,
     'mark',
-    `要在二叉排序树里插入 ${key}：从根结点 ${rootV} 出发，比它小就往左、比它大就往右。目前中序序列是 ${inorderValues(t).join(' → ')}`,
+    `要在二叉排序树里插入 ${key}：数据里一共 ${keys.length} 个关键字，树上先摆好了 ${t.nodes.size} 个，就差 ${key} 这一个没进去。从根结点 ${rootV} 出发，比它小就往左、比它大就往右`,
     { 插入值: key, 结点数: t.nodes.size },
-    { hot: [t.root!], pointers: { p: t.root, pre: null }, note: 'p = 当前比到的结点，pre = 它的父结点' },
+    {
+      hot: t.root === null ? [] : [t.root],
+      pointers: { p: t.root, pre: null },
+      note: 'p = 当前比到的结点，pre = 它的父结点',
+    },
   )
 
   // ① 一路比大小，直到走到空位
@@ -531,15 +593,16 @@ const BST_SEARCH_CODE = [
 ]
 
 function* runBstSearch(data: number[], ctx: RunnerContext = {}): AlgoRunner {
-  const pool = valuePool(data, 3)
-  const t = balancedBst(pool)
+  // 数据里的关键字全都建进树里：n 个数据就是 n 个结点
+  const keys = distinctKeys(data)
+  const t = balancedBst(keys)
   const rootId = t.root!
   const rootV = t.nodes.get(rootId)!.v
   const hitKey = pickSearchTarget(t)
   const first = ctx.target ?? hitKey
   const firstIn = treeHas(t, first)
   // 第二个目标一定和第一个相反：先命中就再查一个不存在的，先落空就再查一个存在的
-  const second = firstIn ? pickGapKey(pool, rootV) : hitKey
+  const second = firstIn ? pickGapKey(keys, rootV) : hitKey
 
   const frame = (
     line: number,
@@ -625,7 +688,7 @@ function* runBstSearch(data: number[], ctx: RunnerContext = {}): AlgoRunner {
     2,
     'mark',
     firstIn
-      ? `${first} 找到了。再查一个不存在的关键字做对照：${second} 是值池里两个相邻关键字中间的数，树里肯定没有`
+      ? `${first} 找到了。再查一个不存在的关键字做对照：${second} 落在两个相邻关键字中间（或者比最大的还大一点），树里肯定没有`
       : `${first} 不在树里。再查一个存在的关键字做对照：${second}`,
     { target: second },
     { hot: [rootId], pointers: { p: rootId }, note: '两种情况都演一遍' },
@@ -716,9 +779,9 @@ function greedyPhases(t: Bst): Phase[] {
 }
 
 function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
-  // 至少 7 个不同的关键字，① ② ③ 三种删除情况才都能排得出来
-  const pool = valuePool(data, 7)
-  const t = balancedBst(pool)
+  // 数据里的关键字全都建进树里（n 个数据 = n 个结点），再依次挑三个删掉
+  const keys = distinctKeys(data)
+  const t = balancedBst(keys)
   const phases = planDeletes(t) ?? greedyPhases(t)
 
   const frame = (
@@ -1302,15 +1365,20 @@ function avlSpec(kind: AvlKind, id: string, name: string, summary: string, data:
   return {
     id,
     name,
-    category: 'tree',
+    category: 'search',
     group: '平衡二叉树 AVL',
     summary,
     complexity: { time: 'O(log n)', space: 'O(log n)（递归回溯的栈）' },
     renderer: 'tree',
     codeLines: avlCodeLines(kind),
     defaultData: () => [...data],
-    initComment: (d) =>
-      `失衡前是一棵 AVL 树，结点下端的小字是平衡因子 bf：中序序列 ${valuePool(d, 5).join(' → ')}。接下来插入 ${pickAvlSetup(valuePool(d, 5), kind).key}，触发${text.label}（${text.where}）失衡`,
+    // 四种旋转必须是"插完刚好失衡"的那个最小形状：失衡前 5 个结点 + 新插入的 1 个 = 6 个，
+    // 形状是定死的，所以数据规模只有 6 这一个合法值（下拉框里也只给这一个）
+    sizes: [6],
+    initComment: (d) => {
+      const setup = pickAvlSetup(valuePool(d, 5), kind)
+      return `失衡前是一棵 AVL 树，结点下端的小字是平衡因子 bf：中序序列 ${setup.values.join(' → ')}。接下来插入 ${setup.key}，触发${text.label}（${text.where}）失衡`
+    },
     initTree: (d) => avlInitTree(d, kind),
     createRunner: (d) => runAvl(d, kind),
   }
@@ -1321,22 +1389,23 @@ export const treeSearchSpecs: AlgorithmSpec[] = [
   {
     id: 'bst-insert',
     name: '二叉排序树·插入',
-    category: 'tree',
+    category: 'search',
     group: '二叉排序树',
     summary: '比它小往左、比它大往右，走到空位挂上去；相同的关键字不插入',
     complexity: { time: '平均 O(log n)，最坏 O(n)', space: 'O(1)' },
     renderer: 'tree',
     codeLines: BST_INSERT_CODE,
     defaultData: BST_DATA,
-    defaultValue: (data) => {
-      const pool = valuePool(data, 3)
-      const t = balancedBst(pool)
-      return pickGapKey(pool, t.nodes.get(t.root!)!.v)
+    // n 个数据：树上先摆 n-1 个，插进去剩下的那一个，插完正好 n 个结点
+    sizes: TREE_SIZES,
+    defaultValue: (data) => planInsert(distinctKeys(data)).key,
+    initComment: (data) => {
+      const keys = distinctKeys(data)
+      const { key } = planInsert(keys)
+      return `数据里一共 ${keys.length} 个关键字（升序：${keys.join(' → ')}）。树上先按升序摆好了其中 ${keys.length - 1} 个，就差 ${key} 这一个没进去 —— 现在把它插进去，插完树上正好 ${keys.length} 个结点`
     },
-    initComment: (data) =>
-      `示例数据先按升序建成一棵二叉排序树（中序序列就是 ${valuePool(data, 3).join(' → ')}），接下来插入一个新关键字：比它小就往左、比它大就往右`,
     initTree: (data) =>
-      treeOf(balancedBst(valuePool(data, 3)), {
+      treeOf(balancedBst(planInsert(distinctKeys(data)).base), {
         note: '播放：从根开始比大小，走到空位把新结点挂上',
       }),
     createRunner: runBstInsert,
@@ -1344,39 +1413,43 @@ export const treeSearchSpecs: AlgorithmSpec[] = [
   {
     id: 'bst-search',
     name: '二叉排序树·查找',
-    category: 'tree',
+    category: 'search',
     group: '二叉排序树',
     summary: '逐层比较，命中就标绿；走到 NULL 说明树里没有',
     complexity: { time: '平均 O(log n)，最坏 O(n)', space: 'O(1)' },
     renderer: 'tree',
     codeLines: BST_SEARCH_CODE,
     defaultData: BST_DATA,
-    defaultTarget: (data) => pickSearchTarget(balancedBst(valuePool(data, 3))),
+    sizes: TREE_SIZES,
+    defaultTarget: (data) => pickSearchTarget(balancedBst(distinctKeys(data))),
     initComment: (data) =>
-      `在一棵二叉排序树里查找（中序序列 ${valuePool(data, 3).join(' → ')}）：命中会标绿，走不到就会一路走到 NULL`,
-    initTree: (data) => treeOf(balancedBst(valuePool(data, 3)), { note: '查找从根结点开始，每比一次就砍掉一棵子树' }),
+      `在一棵二叉排序树里查找（中序序列 ${distinctKeys(data).join(' → ')}，${distinctKeys(data).length} 个结点）：命中会标绿，走不到就会一路走到 NULL`,
+    initTree: (data) =>
+      treeOf(balancedBst(distinctKeys(data)), { note: '查找从根结点开始，每比一次就砍掉一棵子树' }),
     createRunner: runBstSearch,
   },
   {
     id: 'bst-delete',
     name: '二叉排序树·删除',
-    category: 'tree',
+    category: 'search',
     group: '二叉排序树',
     summary: '① 叶子直接摘 ② 一个孩子顶替 ③ 两个孩子用中序后继顶替（再摘掉后继）',
     complexity: { time: '平均 O(log n)，最坏 O(n)', space: 'O(1)' },
     renderer: 'tree',
     codeLines: BST_DELETE_CODE,
     defaultData: BST_DATA,
+    // 数据里的关键字全建进树里；5~12 个数据都排得出"叶子 / 一个孩子 / 两个孩子"三种删除情况
+    sizes: TREE_SIZES,
     initComment: (data) =>
-      `先建一棵二叉排序树（中序序列 ${valuePool(data, 7).join(' → ')}），然后依次演示删除的三种情况：叶子、只有一个孩子、有两个孩子`,
+      `先建一棵二叉排序树（中序序列 ${distinctKeys(data).join(' → ')}，${distinctKeys(data).length} 个结点），然后依次演示删除的三种情况：叶子、只有一个孩子、有两个孩子（每删一个结点数就少一个）`,
     initTree: (data) =>
-      treeOf(balancedBst(valuePool(data, 7)), { note: '删除的第一步都是"按关键字查找"' }),
+      treeOf(balancedBst(distinctKeys(data)), { note: '删除的第一步都是"按关键字查找"' }),
     createRunner: runBstDelete,
   },
 
   // ---------------- 平衡二叉树 AVL ----------------
-  avlSpec('LL', 'avl-ll', 'AVL 旋转·LL（右单旋）', '在左孩子的左子树上插入导致失衡 -> 对失衡点做一次右单旋', [20, 30, 40, 50, 70]),
-  avlSpec('RR', 'avl-rr', 'AVL 旋转·RR（左单旋）', '在右孩子的右子树上插入导致失衡 -> 对失衡点做一次左单旋', [30, 40, 50, 60, 80]),
-  avlSpec('LR', 'avl-lr', 'AVL 旋转·LR（先左后右）', '在左孩子的右子树上插入导致失衡 -> 先左旋左孩子，再右旋失衡点', [20, 30, 40, 50, 70]),
-  avlSpec('RL', 'avl-rl', 'AVL 旋转·RL（先右后左）', '在右孩子的左子树上插入导致失衡 -> 先右旋右孩子，再左旋失衡点', [20, 30, 50, 70, 80]),
+  avlSpec('LL', 'avl-ll', 'AVL 旋转·LL（右单旋）', '在左孩子的左子树上插入导致失衡 -> 对失衡点做一次右单旋', [20, 30, 40, 50, 70, 90]),
+  avlSpec('RR', 'avl-rr', 'AVL 旋转·RR（左单旋）', '在右孩子的右子树上插入导致失衡 -> 对失衡点做一次左单旋', [30, 40, 50, 60, 80, 100]),
+  avlSpec('LR', 'avl-lr', 'AVL 旋转·LR（先左后右）', '在左孩子的右子树上插入导致失衡 -> 先左旋左孩子，再右旋失衡点', [20, 30, 40, 50, 70, 90]),
+  avlSpec('RL', 'avl-rl', 'AVL 旋转·RL（先右后左）', '在右孩子的左子树上插入导致失衡 -> 先右旋右孩子，再左旋失衡点', [20, 30, 50, 70, 80, 100]),
 ]

@@ -100,7 +100,13 @@ export const useAlgorithmStore = defineStore('algorithm', () => {
    * 当前值万一不在列表里也补进去，免得 <select> 匹配不到选项、显示成空白。
    */
   const sizes = computed<number[]>(() => {
-    const base: number[] = algorithm.value.squareInput ? [...SQUARE_SIZES] : [...SIZES]
+    // 算法自己声明了合法规模就用它的 —— 形状定死的算法不该让用户选到画不出来的规模
+    const own = algorithm.value.sizes
+    const base: number[] = own?.length
+      ? [...own]
+      : algorithm.value.squareInput
+        ? [...SQUARE_SIZES]
+        : [...SIZES]
     if (!base.includes(dataSize.value)) base.push(dataSize.value)
     return base.sort((a, b) => a - b)
   })

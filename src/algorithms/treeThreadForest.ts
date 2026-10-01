@@ -7,15 +7,15 @@ import type {
   TreeNodeSnapshot,
   TreeView,
 } from '@/core/types'
-import { makeCompleteTree, nodeId } from './treeTraverse'
+import { makeCompleteTree, nodeId, TREE_SIZES } from './treeTraverse'
 
 /**
  * 树与森林 —— 线索二叉树 + 树的三种存储表示 + 树/森林的遍历与转换。
  *
  * 数据约定（和 treeTraverse 保持一致）：一维数字串按**层序**还原成结点，
  * 第 i 个元素就是结点 i，左右孩子是 2i+1 / 2i+2（线索化那两颗完全二叉树）。
- * 树与森林那五个算法共用一棵写死的 7 结点多叉树 / 三棵树的小森林，
- * 结构由下面的 PARENT_OF / FOREST_PARENT 唯一确定，不依赖数据内容。
+ * 树与森林那几个算法共用下面两张"双亲下标表"，**取前 n 项就是 n 个结点的样子**
+ * （n = 数据规模，最多 MAX_NODES 个），所以选 5 就画 5 个结点、选 12 就画 12 个。
  *
  * 快照约定：
  *   - 二叉树用 left / right，多叉树用 children，双亲表示法只填 parent；
@@ -25,13 +25,26 @@ import { makeCompleteTree, nodeId } from './treeTraverse'
  *     否则会和孩子的实线完全重叠（比如"有右孩子的结点"，它的中序后继就在右子树里）。
  *   - 虚线连线（线索 / 双亲）统一往 links 里塞。
  */
-const MAX_NODES = 7
+const MAX_NODES = 15
 
-/** 样例多叉树的双亲下标：t0 -> t1,t2,t3；t1 -> t4,t5；t3 -> t6 */
-const PARENT_OF = [-1, 0, 0, 0, 1, 1, 3]
-/** 小森林：三棵互不相交的树，根分别是 t0 / t3 / t6 */
-const FOREST_PARENT = [-1, 0, 0, -1, 3, 3, -1]
-const FOREST_ROOTS = [0, 3, 6]
+/**
+ * 样例多叉树的双亲下标（取前 n 项用）：孩子个数按 3、2、1、3、2、1… 排，
+ * 于是
+ *   t0 -> t1,t2,t3（3 个孩子）
+ *   t1 -> t4,t5     （2 个孩子）
+ *   t2 -> t6        （1 个孩子）
+ *   t3 -> t7,t8,t9 …（接着又来一轮 3、2、1）
+ * 孩子个数"不定"正是多叉树要用孩子表示法 / 孩子兄弟表示法的原因。
+ */
+const PARENT_OF = [-1, 0, 0, 0, 1, 1, 2, 3, 3, 3, 4, 4, 5, 6, 6]
+
+/**
+ * 小森林的双亲下标（取前 n 项用）：**三棵互不相交的树**，根固定是 t0 / t1 / t2，
+ * 新结点按 0、1、2、0、1、2… 轮流挂到三棵树的根下面 ——
+ * 于是不管选多大规模，画面上都正好是 3 棵树，每棵的孩子个数随规模一起长。
+ */
+const FOREST_PARENT = [-1, -1, -1, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2]
+const FOREST_ROOTS = [0, 1, 2]
 
 const tid = (i: number): string => `t${i}`
 
@@ -710,8 +723,9 @@ function childReprBoard(
         items.push({ text: '', tone: 'dim' })
         continue
       }
-      // 本步刚 malloc 出来的链表结点：先摆在这一格上，箭头要等下一步接上去才画
-      if (j === undefined && o.pending && o.pending[0] === i && k === row.kids.length) {
+      // 本步刚 malloc 出来的链表结点：头插法，所以它出现在**链头**那一格，
+      // 箭头要等下一步执行 firstchild = s 才画出来
+      if (j === undefined && o.pending && o.pending[0] === i && k === 0) {
         const child = o.pending[1]
         items.push({ text: String(child), sub: `值${data[child]!}`, tone: 'hot' })
         continue
@@ -1069,11 +1083,19 @@ function* runChildRepr(data: number[]): AlgoRunner {
   const vars = () => ({ n, 结点数: nodes.length })
   const snap = (o: ViewOpts = {}): TreeView => treeView(nodes, o)
   const noteBase = '孩子表示法：顺序表一格一个结点，每格向右伸出一条孩子链表；找孩子顺着箭头走，找双亲要把所有链表扫一遍'
-  /** 顺序表的当前样子：每行建出来了没有、它的孩子链表上挂了哪些（存的是孩子下标） */
+  /**
+   * 顺序表的当前样子：每行建出来了没有、它的孩子链表上挂了哪些（存的是孩子下标）。
+   *
+   * **注意这里反转了一次**：代码用的是**头插法**
+   *   s->next = firstchild;  firstchild = s;
+   * 所以"最后插进去的那个孩子"排在链头。children 里存的是插入先后顺序，
+   * 画成链表时要反过来，否则画面（1→2→3）和代码（头插法得到 3→2→1）对不上。
+   */
   const tableRows = (): ChildReprRow[] =>
     Array.from({ length: n }, (_, i) => {
       const x = byId.get(tid(i))
-      return { exists: !!x, kids: (x?.children ?? []).map((c) => Number(c.slice(1))) }
+      const inserted = (x?.children ?? []).map((c) => Number(c.slice(1)))
+      return { exists: !!x, kids: inserted.slice().reverse() }
     })
   const board = (o: {
     hotRows?: number[]
@@ -1087,7 +1109,9 @@ function* runChildRepr(data: number[]): AlgoRunner {
   const upTo = (k: number): number[] => Array.from({ length: k }, (_, x) => x)
   /** 一条孩子链表读成人话 —— note 里就要说清"这支箭头指向谁"（存的是下标，这里也写下标） */
   const chainOf = (i: number): string => {
-    const kids = (byId.get(tid(i))?.children ?? []).map((c) => Number(c.slice(1)))
+    const inserted = (byId.get(tid(i))?.children ?? []).map((c) => Number(c.slice(1)))
+    // 同 tableRows：画面上是头插法的顺序，说法要和画面一致
+    const kids = inserted.slice().reverse()
     if (!kids.length) return `下标 ${i}（${data[i]}）没有孩子：右边第一格写 NULL，一支箭头都没有`
     const first = `下标 ${i}（${data[i]}）的第一个孩子是下标 ${kids[0]}`
     const rest = kids.slice(1).map((k) => `再下一个是下标 ${k}`).join('，')
@@ -1147,7 +1171,8 @@ function* runChildRepr(data: number[]): AlgoRunner {
           board({
             hotRows: [i],
             doneRows: upTo(i),
-            hotKid: [i, kids.length - 1],
+            // 头插法：刚插进去的那个孩子在**链头**，也就是反转后的第 0 格
+            hotKid: [i, 0],
             note:
               kids.length === 1
                 ? `② 指针 i 停在下标 ${i} 这一格（紫色）：这一格就是它的第一个孩子。箭头从现在这一格（左列）向右伸到右边第 1 个孩子链表结点上，终点格里存着孩子下标 ${j}`
@@ -1214,7 +1239,8 @@ function* runChildRepr(data: number[]): AlgoRunner {
           board({
             hotRows: hit ? [j, target] : [j],
             doneRows: upTo(n),
-            ...(hit ? { hotKid: [j, kInList] as [number, number] } : {}),
+            // 找双亲是顺着头插法的链点往后走的：插入顺序的第 k 个 = 显示顺序的第 len-1-k 个
+            ...(hit ? { hotKid: [j, kids.length - 1 - kInList] as [number, number] } : {}),
             note: hit
               ? `查第 ${j} 行（指针 j 停在这一行，紫色）：顺着一格一格的箭头往右走，指针 p 走到存着下标 ${target} 的那个链表结点（紫色）—— 命中了！${data[j]} 就是它的双亲`
               : `查第 ${j} 行（结点 ${data[j]}）：${label}，指针 p 顺着这一行的箭头走到底也没看见下标 ${target} → 换下一行`,
@@ -1389,60 +1415,132 @@ function findParentPath(parent: number[], n: number, target: number): string[] {
   return path
 }
 
-const CODE_FOREST = [
-  '// 树与森林的遍历：森林 = 若干棵互不相交的树，逐棵走一遍就行',
-  '// 树的先根遍历：先访问根，再依次先根遍历它的每一棵子树',
-  'void PreOrder(CSTree T) {',
+/* ================================================================== *
+ * 三、树的遍历 / 森林的遍历
+ *
+ * 这里是**两个**算法，不是一个：
+ *   tree-root-traverse —— 树的遍历：一棵树，先根 / 后根；
+ *   forest-traverse    —— 森林的遍历：多棵树逐棵走，先序 / 中序。
+ * 树的遍历只有"先根 / 后根"（树的孩子不分左右、个数也不定，没有"中序遍历"这一说）；
+ * "先序 / 中序"是森林和二叉树的说法 —— 这三个名字指的是同一件事，就是上面那张对照表。
+ * ================================================================== */
+
+/**
+ * 「树 / 森林 / 对应二叉树」三种遍历的对应关系表 —— 树的遍历和森林的遍历都要挂在页面上。
+ *
+ * 这是整个知识点的结论：同一条访问序列，在三种结构里有三个名字。
+ * 用 grid 铺三列（树 / 森林 / 对应二叉树），正在讲的那一列标成紫色，一眼能对上。
+ */
+function relationBoard(mode: 'tree' | 'forest'): BoardView {
+  const head = ['树', '森林', '对应二叉树']
+  const rows = [
+    ['先根遍历', '先序遍历', '先序遍历'],
+    ['后根遍历', '中序遍历', '中序遍历'],
+  ]
+  /** 本算法讲的是哪一列：树的遍历讲第 0 列，森林的遍历讲第 1 列 */
+  const mine = mode === 'tree' ? 0 : 1
+  const toneOf = (c: number): CellTone => (c === mine ? 'hot' : 'base')
+  const items: CellItem[] = head.map((text, c) => ({
+    text,
+    sub: c === mine ? '本算法' : undefined,
+    tone: toneOf(c),
+  }))
+  for (const row of rows) row.forEach((text, c) => items.push({ text, tone: toneOf(c) }))
+
+  return {
+    title: '三种遍历的对应关系',
+    layout: 'grid',
+    cols: 3,
+    items,
+    note:
+      mode === 'tree'
+        ? '树的先根遍历 = 它对应二叉树的先序遍历；树的后根遍历 = 它对应二叉树的中序遍历'
+        : '森林的先序遍历 = 依次对每棵树做先根遍历（= 对应二叉树的先序遍历）；森林的中序遍历 = 依次对每棵树做后根遍历（= 对应二叉树的中序遍历）',
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 三·1 树的遍历（一棵树：先根遍历 / 后根遍历）
+ * ------------------------------------------------------------------ */
+
+const CODE_TREE_ROOT = [
+  '// 一棵树的遍历：只有"先根遍历"和"后根遍历"两种（树没有中序遍历）',
+  '// 先根遍历：先访问根，再依次先根遍历它的每一棵子树',
+  'void PreRoot(CSTree T) {',
   '  if (T == NULL) return;',
   '  visit(T);                              // ① 先访问根',
   '  for (p = T->firstchild; p; p = p->nextsibling)',
-  '    PreOrder(p);                         // ② 依次先根遍历每一棵子树',
+  '    PreRoot(p);                          // ② 依次先根遍历每一棵子树',
   '}',
-  '// 树的后根遍历：先依次后根遍历每一棵子树，最后才访问根',
-  'void PostOrder(CSTree T) {',
+  '// 后根遍历：先依次后根遍历它的每一棵子树，最后才访问根',
+  'void PostRoot(CSTree T) {',
   '  if (T == NULL) return;',
   '  for (p = T->firstchild; p; p = p->nextsibling)',
-  '    PostOrder(p);                        // ① 先把所有子树走完',
+  '    PostRoot(p);                         // ① 先把所有子树走完',
   '  visit(T);                              // ② 最后才访问根',
   '}',
-  '// 森林的先根遍历 = 依次对各棵树先根遍历；森林的后根遍历 = 依次对各棵树后根遍历',
-  'void ForestTraverse(CSTree forest[], int k) {',
-  '  for (int i = 0; i < k; i++) PreOrder(forest[i]);   // 先根：逐棵走',
-  '  for (int i = 0; i < k; i++) PostOrder(forest[i]);  // 后根：逐棵走',
-  '}',
+  '// 对应关系：树的先根遍历 = 这棵树对应二叉树的先序遍历',
+  '//           树的后根遍历 = 这棵树对应二叉树的中序遍历',
 ]
 
-function* runForestTraverse(data: number[]): AlgoRunner {
+function* runTreeRootTraverse(data: number[]): AlgoRunner {
   const n = Math.min(data.length, MAX_NODES)
-  const cs = childLists(FOREST_PARENT, n)
+  const cs = childLists(PARENT_OF, n)
   const nodes: TreeNodeSnapshot[] = Array.from({ length: n }, (_, i) => ({
     id: tid(i),
     value: data[i]!,
     children: [...cs[i]!],
   }))
   const byId = new Map(nodes.map((x) => [x.id, x]))
-  const roots = FOREST_ROOTS.filter((i) => i < n).map(tid)
   const preSeq: string[] = []
   const postSeq: string[] = []
 
+  /** 每一帧都带上"树 / 森林 / 对应二叉树"对照表（画在树下面） */
+  const board = (): BoardView[] => [relationBoard('tree')]
+
   if (!n) {
-    yield { line: 1, action: 'done', array: [], tree: treeView([], { roots: [] }), comment: '数据为空，没有森林可以遍历', vars: { n: 0 } }
+    yield {
+      line: 3,
+      action: 'done',
+      array: [],
+      tree: treeView([], { root: null }),
+      boards: board(),
+      comment: '数据为空，没有树可以遍历',
+      vars: { n: 0 },
+    }
     return
   }
 
   const val = (id: string | null | undefined): string => (id ? String(byId.get(id)?.value ?? '?') : '空')
   const nums = (ids: string[]): number[] => ids.map((id) => Number(byId.get(id)!.value))
-  const snap = (o: ViewOpts = {}): TreeView => treeView(nodes, { root: null, roots, ...o })
-  const noteBase = `森林：roots 给出 ${roots.length} 棵树的根，各棵树互不相交`
-  const text = (ids: string[]) => ids.map((id) => byId.get(id)!.value).join(' → ')
+  const text = (ids: string[]): string => ids.map((id) => byId.get(id)!.value).join(' → ')
+  /** 一棵树：root 给根结点，不给 roots（roots 是森林的说法） */
+  const snap = (o: ViewOpts = {}): TreeView => treeView(nodes, { root: tid(0), ...o })
 
   yield {
     line: 1,
     action: 'init',
     array: nums(preSeq),
-    tree: snap({ hot: [...roots], note: noteBase }),
-    comment: `这组数据还原成一个森林：${roots.map((id) => val(id)).join('、')} 分别是 ${roots.length} 棵树的根，它们互不相交`,
-    vars: { n, 棵数: roots.length },
+    tree: snap({
+      hot: [tid(0)],
+      note: `一棵树（不是森林）：根是 ${val(tid(0))}，它下面挂 ${cs[0]!.length} 棵子树。树只有先根和后根两种遍历`,
+    }),
+    boards: board(),
+    comment: `这是**一棵树**：根结点 ${val(tid(0))} 下面挂着 ${cs[0]!.length} 棵子树。树的遍历只有两种 —— 先根遍历（先根、再依次走各子树）和后根遍历（先依次走各子树、最后才走根）`,
+    vars: { n, 先根序号: 0, 后根序号: 0 },
+  }
+
+  yield {
+    line: 2,
+    action: 'mark',
+    array: nums(preSeq),
+    tree: snap({
+      hot: [tid(0)],
+      note: '先根遍历：访问根 → 依次先根遍历每一棵子树（一棵子树整棵走完，才轮到下一棵）',
+    }),
+    boards: board(),
+    comment: `先演示先根遍历：从根 ${val(tid(0))} 出发，先访问根，再依次先根遍历它的每一棵子树`,
+    vars: { n, 先根序号: 0, 后根序号: 0 },
   }
 
   function* pre(id: string): AlgoRunner {
@@ -1452,7 +1550,13 @@ function* runForestTraverse(data: number[]): AlgoRunner {
       line: 5,
       action: 'mark',
       array: nums(preSeq),
-      tree: snap({ hot: [id], done: [...preSeq], pointers: { p: id }, note: `先根遍历：先访问根 ${x.value}` }),
+      tree: snap({
+        hot: [id],
+        done: [...preSeq],
+        pointers: { p: id },
+        note: `先根遍历：先访问根 ${x.value}，再依次先根遍历它的每一棵子树`,
+      }),
+      boards: board(),
       comment: `① 先访问根结点 ${x.value}（先根序列第 ${preSeq.length} 个）`,
       vars: { n, 先根序号: preSeq.length },
     }
@@ -1465,13 +1569,42 @@ function* runForestTraverse(data: number[]): AlgoRunner {
           hot: [c],
           done: [...preSeq],
           pointers: { p: id },
-          note: `接着先根遍历 ${x.value} 的子树（根是 ${val(c)}）`,
+          note: `② 接着先根遍历 ${x.value} 的子树，这棵子树的根是 ${val(c)}`,
         }),
+        boards: board(),
         comment: `② 依次先根遍历 ${x.value} 的子树：下一棵子树的根是 ${val(c)}`,
         vars: { n, 先根序号: preSeq.length },
       }
       yield* pre(c)
     }
+  }
+
+  yield* pre(tid(0))
+
+  yield {
+    line: 8,
+    action: 'mark',
+    array: nums(preSeq),
+    tree: snap({
+      done: [...preSeq],
+      note: `先根遍历序列：${text(preSeq)}`,
+    }),
+    boards: board(),
+    comment: `先根遍历走完，序列是 ${text(preSeq)}（共 ${preSeq.length} 个结点，每个结点只访问一次）`,
+    vars: { n, 先根序号: preSeq.length },
+  }
+
+  yield {
+    line: 9,
+    action: 'mark',
+    array: nums(postSeq),
+    tree: snap({
+      hot: [tid(0)],
+      note: '后根遍历：先依次后根遍历每一棵子树，最后才访问根',
+    }),
+    boards: board(),
+    comment: `再演示后根遍历：同样从根 ${val(tid(0))} 出发，但顺序和先根刚好相反 —— 先把每一棵子树都走完，最后才访问根`,
+    vars: { n, 先根序号: preSeq.length, 后根序号: 0 },
   }
 
   function* post(id: string): AlgoRunner {
@@ -1485,9 +1618,10 @@ function* runForestTraverse(data: number[]): AlgoRunner {
           hot: [c],
           done: [...postSeq],
           pointers: { p: id },
-          note: `后根遍历：先走 ${x.value} 的子树（根是 ${val(c)}）`,
+          note: `后根遍历：先走后根遍历 ${x.value} 的子树（子树的根是 ${val(c)}）`,
         }),
-        comment: `① 先后根遍历 ${x.value} 的子树：根是 ${val(c)}`,
+        boards: board(),
+        comment: `① 先后根遍历 ${x.value} 的子树：子树根是 ${val(c)}`,
         vars: { n, 后根序号: postSeq.length },
       }
       yield* post(c)
@@ -1497,59 +1631,275 @@ function* runForestTraverse(data: number[]): AlgoRunner {
       line: 14,
       action: 'mark',
       array: nums(postSeq),
-      tree: snap({ hot: [id], done: [...postSeq], pointers: { p: id }, note: `后根遍历：最后才访问 ${x.value}` }),
+      tree: snap({
+        hot: [id],
+        done: [...postSeq],
+        pointers: { p: id },
+        note: `后根遍历：子树都走完了，最后才访问根 ${x.value}`,
+      }),
+      boards: board(),
       comment: `② 子树都走完了，最后才访问根结点 ${x.value}（后根序列第 ${postSeq.length} 个）`,
       vars: { n, 后根序号: postSeq.length },
     }
   }
 
-  // ---- 先根遍历：逐棵树走 ----
-  for (let k = 0; k < roots.length; k++) {
-    const r = roots[k]!
-    yield {
-      line: 18,
-      action: 'mark',
-      array: nums(preSeq),
-      tree: snap({ hot: [r], done: [...preSeq], note: `先根遍历第 ${k + 1} 棵树（根是 ${val(r)}）` }),
-      comment: `森林的先根遍历 = 各棵树依次先根遍历：现在轮到第 ${k + 1} 棵树，根是 ${val(r)}`,
-      vars: { n, 棵数: roots.length },
-    }
-    yield* pre(r)
-  }
-  yield {
-    line: 18,
-    action: 'mark',
-    array: nums(preSeq),
-    tree: snap({ done: [...preSeq], note: `先根遍历序列：${text(preSeq)}` }),
-    comment: `森林的先根遍历序列是 ${text(preSeq)}（逐棵树走完，一棵树的根走完才轮到下一棵）`,
-    vars: { n, 先根序号: preSeq.length },
-  }
-
-  // ---- 后根遍历：逐棵树走 ----
-  for (let k = 0; k < roots.length; k++) {
-    const r = roots[k]!
-    yield {
-      line: 19,
-      action: 'mark',
-      array: nums(postSeq),
-      tree: snap({
-        hot: [r],
-        done: [...postSeq],
-        note: `后根遍历第 ${k + 1} 棵树（根是 ${val(r)}）：先子树后根`,
-      }),
-      comment: `再做完根遍历：第 ${k + 1} 棵树（根是 ${val(r)}），规则是"先子树、后根"`,
-      vars: { n, 棵数: roots.length },
-    }
-    yield* post(r)
-  }
+  yield* post(tid(0))
 
   yield {
-    line: 20,
+    line: 17,
     action: 'done',
     array: nums(postSeq),
-    tree: snap({ done: [...postSeq], note: `先根：${text(preSeq)}　后根：${text(postSeq)}` }),
-    comment: `遍历完成。先根序列 ${text(preSeq)}；后根序列 ${text(postSeq)}。森林的这两种遍历正好对应它转成二叉树后的先序和中序遍历`,
+    tree: snap({
+      done: [...postSeq],
+      note: `先根遍历：${text(preSeq)}　　后根遍历：${text(postSeq)}　　（分别 = 对应二叉树的先序 / 中序遍历）`,
+    }),
+    boards: board(),
+    comment: `遍历完成。先根序列 ${text(preSeq)}；后根序列 ${text(postSeq)}。把树按"左孩子右兄弟"转成二叉树后，先根序列就是二叉树的先序序列、后根序列就是二叉树的中序序列 —— 所以树的遍历可以直接借二叉树的遍历来做`,
     vars: { n, 先根序号: preSeq.length, 后根序号: postSeq.length },
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 三·2 森林的遍历（多棵树：先序遍历 / 中序遍历）
+ * ------------------------------------------------------------------ */
+
+const CODE_FOREST_TRAVERSE = [
+  '// 森林的遍历：森林 = 若干棵互不相交的树，规则就是"逐棵树依次走"',
+  '// 森林的先序遍历 = 依次对每棵树做先根遍历',
+  'void ForestPre(CSTree forest[], int k) {',
+  '  for (int i = 0; i < k; i++)                    // 一棵一棵来',
+  '    PreRoot(forest[i]);            // 对第 i 棵树做先根遍历（先根、再各子树）',
+  '}',
+  '// 森林的中序遍历 = 依次对每棵树做后根遍历',
+  'void ForestIn(CSTree forest[], int k) {',
+  '  for (int i = 0; i < k; i++)                    // 一棵一棵来',
+  '    PostRoot(forest[i]);           // 对第 i 棵树做后根遍历（先各子树、最后才根）',
+  '}',
+  '// 对应关系：森林的先序遍历 = 对应二叉树的先序遍历',
+  '//           森林的中序遍历 = 对应二叉树的中序遍历',
+  'void PreRoot(CSTree T)  { visit(T);  for (p = T->firstchild; p; p = p->nextsibling) PreRoot(p);  }',
+  'void PostRoot(CSTree T) { for (p = T->firstchild; p; p = p->nextsibling) PostRoot(p);  visit(T); }',
+]
+
+function* runForestTraverse(data: number[]): AlgoRunner {
+  const n = Math.min(data.length, MAX_NODES)
+  const cs = childLists(FOREST_PARENT, n)
+  const rootIdx = FOREST_ROOTS.filter((i) => i < n)
+  const roots = rootIdx.map(tid)
+  /** 每个结点属于森林里的第几棵树（1-based）：从每棵树的根往下走一遍标出来 */
+  const treeNo = new Map<string, number>()
+  rootIdx.forEach((r, k) => {
+    const stack = [r]
+    while (stack.length) {
+      const i = stack.pop()!
+      treeNo.set(tid(i), k + 1)
+      for (const c of cs[i]!) stack.push(Number(c.slice(1)))
+    }
+  })
+  const nodes: TreeNodeSnapshot[] = Array.from({ length: n }, (_, i) => ({
+    id: tid(i),
+    value: data[i]!,
+    children: [...cs[i]!],
+    // 结点下方小字直接标出"它属于森林里的第几棵树"，画面上就能分清树1 / 树2 / 树3
+    sub: treeNo.has(tid(i)) ? `树${treeNo.get(tid(i))}` : undefined,
+  }))
+  const byId = new Map(nodes.map((x) => [x.id, x]))
+  const preSeq: string[] = []
+  const midSeq: string[] = []
+
+  /** 每一帧都带上"树 / 森林 / 对应二叉树"对照表（这次高亮的是森林那一列） */
+  const board = (): BoardView[] => [relationBoard('forest')]
+
+  if (!n) {
+    yield {
+      line: 1,
+      action: 'done',
+      array: [],
+      tree: treeView([], { root: null, roots: [] }),
+      boards: board(),
+      comment: '数据为空，没有森林可以遍历',
+      vars: { n: 0 },
+    }
+    return
+  }
+
+  const val = (id: string | null | undefined): string => (id ? String(byId.get(id)?.value ?? '?') : '空')
+  const nums = (ids: string[]): number[] => ids.map((id) => Number(byId.get(id)!.value))
+  const text = (ids: string[]): string => ids.map((id) => byId.get(id)!.value).join(' → ')
+  /** 森林：roots 给出每一棵树的根，不用 root */
+  const snap = (o: ViewOpts = {}): TreeView => treeView(nodes, { root: null, roots, ...o })
+  /** 第 k 棵树（1-based）的全部结点 id —— 用来把整棵树一起点亮 */
+  const idsOfTree = (k: number): string[] => nodes.filter((x) => treeNo.get(x.id) === k).map((x) => x.id)
+
+  yield {
+    line: 1,
+    action: 'init',
+    array: nums(preSeq),
+    tree: snap({
+      hot: [...roots],
+      note: `一个森林：${roots.length} 棵互不相交的树，根分别是 ${roots.map((id) => val(id)).join('、')}；结点小字标出它属于第几棵树`,
+    }),
+    boards: board(),
+    comment: `这是**一个森林**：${roots.length} 棵互不相交的树，根结点分别是 ${roots.map((id) => val(id)).join('、')}（结点下面的小字"树1 / 树2 / 树3"标出它属于哪一棵）`,
+    vars: { n, 棵数: roots.length },
+  }
+
+  function* pre(id: string, k: number): AlgoRunner {
+    const x = byId.get(id)!
+    preSeq.push(id)
+    yield {
+      line: 5,
+      action: 'mark',
+      array: nums(preSeq),
+      tree: snap({
+        hot: [id],
+        done: [...preSeq],
+        pointers: { p: id },
+        note: `森林的先序遍历 = 第 ${k} 棵树的先根遍历：先访问根 ${x.value}`,
+      }),
+      boards: board(),
+      comment: `第 ${k} 棵树的先根遍历：先访问根 ${x.value}（森林先序序列第 ${preSeq.length} 个）`,
+      vars: { n, 棵数: roots.length, 先序序号: preSeq.length },
+    }
+    for (const c of x.children ?? []) {
+      yield {
+        line: 14,
+        action: 'mark',
+        array: nums(preSeq),
+        tree: snap({
+          hot: [c],
+          done: [...preSeq],
+          pointers: { p: id },
+          note: `第 ${k} 棵树：接着先根遍历 ${x.value} 的子树（子树的根是 ${val(c)}）`,
+        }),
+        boards: board(),
+        comment: `第 ${k} 棵树：先根遍历 ${x.value} 的子树，下一棵子树的根是 ${val(c)}`,
+        vars: { n, 棵数: roots.length, 先序序号: preSeq.length },
+      }
+      yield* pre(c, k)
+    }
+  }
+
+  function* post(id: string, k: number): AlgoRunner {
+    const x = byId.get(id)!
+    for (const c of x.children ?? []) {
+      yield {
+        line: 15,
+        action: 'mark',
+        array: nums(midSeq),
+        tree: snap({
+          hot: [c],
+          done: [...midSeq],
+          pointers: { p: id },
+          note: `第 ${k} 棵树 · 中序遍历：先走后根遍历 ${x.value} 的子树（子树的根是 ${val(c)}）`,
+        }),
+        boards: board(),
+        comment: `第 ${k} 棵树：森林的中序遍历就是对这棵树做后根遍历，先走 ${x.value} 的子树（子树根是 ${val(c)}）`,
+        vars: { n, 棵数: roots.length, 中序序号: midSeq.length },
+      }
+      yield* post(c, k)
+    }
+    midSeq.push(id)
+    yield {
+      line: 10,
+      action: 'mark',
+      array: nums(midSeq),
+      tree: snap({
+        hot: [id],
+        done: [...midSeq],
+        pointers: { p: id },
+        note: `第 ${k} 棵树 · 中序遍历：子树都走完，最后才访问根 ${x.value}`,
+      }),
+      boards: board(),
+      comment: `第 ${k} 棵树：子树都走完了，最后才访问根 ${x.value}（森林中序序列第 ${midSeq.length} 个）`,
+      vars: { n, 棵数: roots.length, 中序序号: midSeq.length },
+    }
+  }
+
+  // ---- 先序遍历：依次对每棵树做先根遍历 ----
+  yield {
+    line: 2,
+    action: 'mark',
+    array: nums(preSeq),
+    tree: snap({
+      hot: [...roots],
+      note: '森林的先序遍历 = 依次对每棵树做先根遍历（= 对应二叉树的先序遍历）',
+    }),
+    boards: board(),
+    comment: `先做森林的先序遍历：规则是"依次对每棵树做先根遍历" —— 第 1 棵树整棵走完，才轮到第 2 棵、第 3 棵`,
+    vars: { n, 棵数: roots.length, 先序序号: 0 },
+  }
+  for (let k = 0; k < roots.length; k++) {
+    const r = roots[k]!
+    yield {
+      line: 4,
+      action: 'mark',
+      array: nums(preSeq),
+      tree: snap({
+        hot: idsOfTree(k + 1),
+        done: [...preSeq],
+        pointers: { p: r },
+        note: `森林先序遍历：轮到第 ${k + 1} 棵树（根是 ${val(r)}）`,
+      }),
+      boards: board(),
+      comment: `森林先序遍历：轮到第 ${k + 1} 棵树（根是 ${val(r)}），对它做先根遍历`,
+      vars: { n, 棵数: roots.length, 先序序号: preSeq.length },
+    }
+    yield* pre(r, k + 1)
+  }
+  yield {
+    line: 6,
+    action: 'mark',
+    array: nums(preSeq),
+    tree: snap({ done: [...preSeq], note: `森林的先序遍历序列：${text(preSeq)}` }),
+    boards: board(),
+    comment: `森林的先序遍历序列是 ${text(preSeq)}：一棵树的全部结点走完，才轮到下一棵树`,
+    vars: { n, 棵数: roots.length, 先序序号: preSeq.length },
+  }
+
+  // ---- 中序遍历：依次对每棵树做后根遍历 ----
+  yield {
+    line: 7,
+    action: 'mark',
+    array: nums(midSeq),
+    tree: snap({
+      hot: [...roots],
+      note: '森林的中序遍历 = 依次对每棵树做后根遍历（= 对应二叉树的中序遍历）',
+    }),
+    boards: board(),
+    comment: `再做森林的中序遍历：规则是"依次对每棵树做后根遍历" —— 一棵树内部先走完各子树，最后才是这棵树的根`,
+    vars: { n, 棵数: roots.length, 中序序号: 0 },
+  }
+  for (let k = 0; k < roots.length; k++) {
+    const r = roots[k]!
+    yield {
+      line: 9,
+      action: 'mark',
+      array: nums(midSeq),
+      tree: snap({
+        hot: idsOfTree(k + 1),
+        done: [...midSeq],
+        pointers: { p: r },
+        note: `森林中序遍历：轮到第 ${k + 1} 棵树（根是 ${val(r)}）`,
+      }),
+      boards: board(),
+      comment: `森林中序遍历：轮到第 ${k + 1} 棵树（根是 ${val(r)}），对它做后根遍历`,
+      vars: { n, 棵数: roots.length, 中序序号: midSeq.length },
+    }
+    yield* post(r, k + 1)
+  }
+
+  yield {
+    line: 13,
+    action: 'done',
+    array: nums(midSeq),
+    tree: snap({
+      done: [...midSeq],
+      note: `先序遍历：${text(preSeq)}　　中序遍历：${text(midSeq)}`,
+    }),
+    boards: board(),
+    comment: `遍历完成。森林的先序遍历序列 ${text(preSeq)}；中序遍历序列 ${text(midSeq)}。这两种遍历正好等于它对应二叉树的先序遍历和中序遍历`,
+    vars: { n, 先序序号: preSeq.length, 中序序号: midSeq.length },
   }
 }
 
@@ -1738,6 +2088,8 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_THREAD_INORDER,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
       `把 [${data.slice(0, MAX_NODES).join(', ')}] 按层序还原成一棵完全二叉树，开始中序线索化`,
     initTree: (data) =>
@@ -1757,6 +2109,8 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_THREAD_TRAVERSE,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
       `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成完全二叉树并做中序线索化，然后不用栈、不用递归地遍历它`,
     initTree: (data) =>
@@ -1776,6 +2130,8 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_PARENT,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
       `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成一棵树，再用"双亲表示法"把它存进一个一维数组`,
     initTree: (data) =>
@@ -1797,6 +2153,8 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_CHILD,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
       `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成一棵树，再用"孩子表示法"给它挂上孩子链表`,
     initTree: (data) =>
@@ -1818,6 +2176,8 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_SIBLING,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
       `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成一棵树，再用"孩子兄弟表示法"存成二叉链表`,
     initTree: (data) =>
@@ -1828,25 +2188,74 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     createRunner: runSiblingRepr,
   },
   {
-    id: 'tree-forest-traverse',
-    name: '树与森林的遍历',
+    id: 'tree-root-traverse',
+    name: '树的遍历（先根 / 后根）',
     category: 'tree',
     group: '树与森林',
-    summary: '森林逐棵树走：先根遍历（对应二叉树先序）与后根遍历（对应二叉树中序）',
+    summary: '一棵树：先根遍历（先根、再各子树）与后根遍历（先各子树、最后才根）—— 树没有"中序遍历"',
     complexity: { time: 'O(n)', space: 'O(h)，h 是树高（递归栈）' },
     renderer: 'tree',
-    codeLines: CODE_FOREST,
+    codeLines: CODE_TREE_ROOT,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
-      `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成一个森林（3 棵树），分别做先根遍历和后根遍历`,
+      `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成**一棵树**，演示树的先根遍历和后根遍历（树没有中序遍历）`,
+    // 对照表要在第一帧就出现在页面上：首帧由 engine 造，只能从 initScene 给板子
+    initScene: () => ({ boards: [relationBoard('tree')] }),
     initTree: (data) => {
       const n = Math.min(data.length, MAX_NODES)
+      const cs = childLists(PARENT_OF, n)
       return treeView(
-        Array.from({ length: n }, (_, i) => ({ id: tid(i), value: data[i]!, children: [...childLists(FOREST_PARENT, n)[i]!] })),
+        Array.from({ length: n }, (_, i) => ({ id: tid(i), value: data[i]!, children: [...cs[i]!] })),
+        {
+          root: n ? tid(0) : null,
+          note: '树的先根遍历 = 它对应二叉树的先序遍历；树的后根遍历 = 它对应二叉树的中序遍历',
+        },
+      )
+    },
+    createRunner: runTreeRootTraverse,
+  },
+  {
+    id: 'forest-traverse',
+    name: '森林的遍历（先序 / 中序）',
+    category: 'tree',
+    group: '树与森林',
+    summary: '森林逐棵树走：先序遍历（= 各棵树的先根遍历）与中序遍历（= 各棵树的后根遍历）',
+    complexity: { time: 'O(n)', space: 'O(h)，h 是树高（递归栈）' },
+    renderer: 'tree',
+    codeLines: CODE_FOREST_TRAVERSE,
+    defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
+    initComment: (data) =>
+      `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成一个森林（${FOREST_ROOTS.length} 棵树），演示森林的先序遍历和中序遍历`,
+    initScene: () => ({ boards: [relationBoard('forest')] }),
+    initTree: (data) => {
+      const n = Math.min(data.length, MAX_NODES)
+      const cs = childLists(FOREST_PARENT, n)
+      const rootIdx = FOREST_ROOTS.filter((i) => i < n)
+      // 结点小字标出它属于森林里的第几棵树（和生成器里一致）
+      const treeNo = new Map<string, number>()
+      rootIdx.forEach((r, k) => {
+        const stack = [r]
+        while (stack.length) {
+          const i = stack.pop()!
+          treeNo.set(tid(i), k + 1)
+          for (const c of cs[i]!) stack.push(Number(c.slice(1)))
+        }
+      })
+      return treeView(
+        Array.from({ length: n }, (_, i) => ({
+          id: tid(i),
+          value: data[i]!,
+          children: [...cs[i]!],
+          sub: treeNo.has(tid(i)) ? `树${treeNo.get(tid(i))}` : undefined,
+        })),
         {
           root: null,
-          roots: FOREST_ROOTS.filter((i) => i < n).map(tid),
-          note: `森林：roots 给出 ${FOREST_ROOTS.filter((i) => i < n).length} 棵树的根，各棵树互不相交`,
+          roots: rootIdx.map(tid),
+          note: `森林：roots 给出 ${rootIdx.length} 棵树的根，各棵树互不相交；结点小字标出它属于第几棵树`,
         },
       )
     },
@@ -1862,6 +2271,8 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_TO_BINARY,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数 = 数据规模：形状按前 n 项的双亲表长出来（选 5 就 5 个结点，选 12 就 12 个）
+    sizes: TREE_SIZES,
     initComment: (data) =>
       `把 [${data.slice(0, MAX_NODES).join(', ')}] 还原成一棵多叉树，然后用"左孩子右兄弟"把它转成二叉树`,
     initTree: (data) =>

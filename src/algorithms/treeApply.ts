@@ -6,6 +6,7 @@ import type {
   TreeView,
   TreeNodeSnapshot,
 } from '@/core/types'
+import { TREE_SIZES } from './treeTraverse'
 
 /**
  * 树的应用 —— 哈夫曼树 / 堆 / 并查集。
@@ -26,7 +27,11 @@ function charOf(i: number): string {
   return String.fromCharCode(65 + i)
 }
 
-/** 堆 / 并查集的默认数组规模 */
+/**
+ * 兜底规模。
+ *   HEAP_N —— 堆的数组长度现在**跟着数据规模走**，只有数据为空时才用这 9 个 0 撑一块板子；
+ *   UF_N   —— 并查集的三组结构（{0,1,2} / {3,4} / {5,6,7}）就摆成 8 个结点，所以它只有这一个规模。
+ */
 const HEAP_N = 9
 const UF_N = 8
 
@@ -102,32 +107,201 @@ function huffmanCodes(tree: HufTree): Array<{ ch: string; w: number; code: strin
   return out
 }
 
+/** 哈夫曼构造的默认权值（8 个叶子，对应字符 A~H） */
+const HUF_SAMPLE = [5, 29, 7, 8, 14, 23, 3, 11]
+
 /**
- * 哈夫曼树的树形快照。
+ * 当前森林里**真的已经存在**的结点（按创建顺序）。
+ *
+ * 这一步是「初始状态不能有连线」的关键：哈夫曼树的内部结点是**边合并边 new** 出来的，
+ * 如果每帧都把整棵树的全部结点（包括还没造出来的内部结点）都画出来，
+ * 初始状态就会凭空多出一排内部结点和它们的连线 —— 那正是之前的 bug。
+ */
+function liveNodes(tree: HufTree, forest: string[]): HufNode[] {
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]))
+  const alive = new Set<string>()
+  const walk = (id: string): void => {
+    if (alive.has(id)) return
+    const n = byId.get(id)
+    if (!n) return
+    alive.add(id)
+    if (n.left) walk(n.left)
+    if (n.right) walk(n.right)
+  }
+  for (const r of forest) walk(r)
+  return tree.nodes.filter((n) => alive.has(n.id))
+}
+
+/** 一棵树里最左边那个叶子。森林按它排序，画面上的结点移动幅度才最小 */
+function leftLeafId(byId: Map<string, HufNode>, id: string): string {
+  let cur = byId.get(id)
+  while (cur?.left) cur = byId.get(cur.left)
+  return cur?.id ?? id
+}
+
+/** 结点下方的小字：叶子给字符，内部结点给"两个孩子权值相加"的算式 */
+function subOf(tree: HufTree, n: HufNode): string {
+  if (n.ch !== undefined) return n.ch
+  const byId = new Map(tree.nodes.map((x) => [x.id, x]))
+  const lw = byId.get(n.left!)?.w
+  const rw = byId.get(n.right!)?.w
+  return lw !== undefined && rw !== undefined ? `${lw}+${rw}` : '—'
+}
+
+/**
+ * 哈夫曼**构造**过程中的树形快照 = 当前的森林。
  * 二叉树用 left / right（渲染器按中序布局，"只有左孩子"就一定在父结点左边）；
- * 森林（构造过程）用 roots 把每一棵都列出来，根结点不再画向上的虚线。
+ * 森林用 roots 把每一棵都列出来。父子实线由 left / right 自动画，
+ * 所以这里**一条额外连线都不给**。
  */
 function hufView(
   tree: HufTree,
   forest: string[],
   opts: { hot?: string[]; done?: string[]; pointers?: Record<string, string | null>; note?: string } = {},
 ): TreeView {
-  const nodes: TreeNodeSnapshot[] = tree.nodes.map((n) => ({
-    id: n.id,
-    value: n.w,
-    left: n.left ?? null,
-    right: n.right ?? null,
-    sub: n.ch ?? '—',
-  }))
   return {
-    nodes,
+    nodes: liveNodes(tree, forest).map((n) => ({
+      id: n.id,
+      value: n.w,
+      left: n.left ?? null,
+      right: n.right ?? null,
+      sub: subOf(tree, n),
+    })),
     roots: forest.length ? [...forest] : tree.root ? [tree.root] : [],
     hot: opts.hot ?? [],
     done: opts.done ?? [],
     pointers: opts.pointers ?? {},
-    links: forest
-      .filter((r) => tree.nodes.find((n) => n.id === r)?.ch !== undefined)
-      .map((r) => ({ from: r, to: r, kind: 'parent' as const })),
+    links: [],
+    note: opts.note,
+  }
+}
+
+/** 每个结点"从双亲过来的那一位"：左孩子记 0、右孩子记 1（根没有） */
+function hufBits(tree: HufTree): Map<string, '0' | '1'> {
+  const m = new Map<string, '0' | '1'>()
+  for (const n of tree.nodes) {
+    if (n.left) m.set(n.left, '0')
+    if (n.right) m.set(n.right, '1')
+  }
+  return m
+}
+
+/**
+ * 哈夫曼**编码**用的树形快照。
+ *
+ * 边上没法单独写字（TreeNodeSnapshot 没有边的标签字段），所以 0 / 1 直接写在
+ * **子结点自己的小字**里：叶子是「A·0」（字符 + 进来的那一位），内部结点就是「0」/「1」。
+ * 结点主体的大数字仍然是对应的权值。
+ */
+function hufCodeView(
+  tree: HufTree,
+  opts: { hot?: string[]; done?: string[]; note?: string } = {},
+): TreeView {
+  const bits = hufBits(tree)
+  return {
+    nodes: tree.nodes.map((n) => {
+      const bit = bits.get(n.id)
+      return {
+        id: n.id,
+        value: n.w,
+        left: n.left ?? null,
+        right: n.right ?? null,
+        sub: n.ch !== undefined ? (bit ? `${n.ch}·${bit}` : n.ch) : (bit ?? '根'),
+      }
+    }),
+    root: tree.root,
+    hot: opts.hot ?? [],
+    done: opts.done ?? [],
+    note: opts.note ?? '结点小字就是"从双亲进来的那一位"：左 0、右 1；叶子写成 A·0（字符 A 走的是 0 这一支）',
+  }
+}
+
+/**
+ * 游离结点池一行摆几格：一行最多 9 格（再多就横向溢出了），超过 9 个折成两行。
+ * 8 个权值一行摆得下；12 个用 6 列，折成两行。
+ */
+function poolCols(n: number): number {
+  return n <= 9 ? n : Math.ceil(n / 2)
+}
+
+/**
+ * 游离结点池：还没被合并过的那些叶子，一个权值一格，摆在树**上方**（position: 'top'）。
+ * 每合并一次就从 items 里去掉被选中的那两个 —— 后面的格子自然依次往前补上空位。
+ */
+function poolBoard(
+  tree: HufTree,
+  pool: string[],
+  cols: number,
+  opts: { hot?: string[]; note: string },
+): BoardView {
+  const byId = new Map(tree.nodes.map((n) => [n.id, n]))
+  const hot = new Set(opts.hot ?? [])
+  return {
+    title: `游离结点池（还剩 ${pool.length} 个单结点树）`,
+    position: 'top',
+    layout: 'grid',
+    cols,
+    items: pool.map((id) => {
+      const n = byId.get(id)
+      return {
+        text: String(n?.w ?? ''),
+        sub: n?.ch ?? '',
+        tone: hot.has(id) ? ('hot' as const) : ('base' as const),
+      }
+    }),
+    note: opts.note,
+  }
+}
+
+/**
+ * 哈夫曼编码表（挂在树**下面**，不加 position）。
+ *
+ * 摆成**三行**（字符 / 权值 / 编码，一个字符一列），而不是一行一个字符。
+ * 这里是树在当主角：一行一个字符的话 8 个字符就要 400 多像素高，
+ * 树被挤到只剩一条缝、非缩到最小的 2/3 不可；横过来摆只占 150 像素，
+ * 整棵哈夫曼树就能完整留在一个画面里。
+ */
+function hufCodeTable(
+  table: Array<{ ch: string; w: number; code: string }>,
+  done: Set<string>,
+  step: string,
+  hotCol: number,
+  opts: { codeText?: string; note: string },
+): BoardView {
+  const state = (r: number): 'base' | 'hot' | 'done' => {
+    if (r === hotCol) return 'hot'
+    return done.has(table[r]!.ch) ? 'done' : 'base'
+  }
+  const rows: Array<{ label: string; cell: (r: number) => CellItem }> = [
+    { label: '字符', cell: (r) => ({ text: table[r]!.ch, tone: state(r) }) },
+    {
+      label: '权值',
+      cell: (r) => ({ text: String(table[r]!.w), tone: state(r) === 'base' ? 'dim' : state(r) }),
+    },
+    {
+      label: '编码',
+      cell: (r) => {
+        const e = table[r]!
+        const isHot = r === hotCol
+        const finished = done.has(e.ch)
+        // 正在编码的那个字符，这一格显示"当前已经走了几位"（边走边长）
+        const code = isHot && opts.codeText !== undefined ? opts.codeText : finished ? e.code : ''
+        return { text: code || '···', tone: isHot ? 'hot' : finished ? 'done' : 'dim' }
+      },
+    },
+  ]
+  const items: CellItem[] = []
+  for (const row of rows) {
+    items.push({ text: row.label, tone: 'dim' })
+    for (let r = 0; r < table.length; r++) items.push(row.cell(r))
+  }
+  return {
+    title: `哈夫曼编码表（${step}）`,
+    layout: 'grid',
+    cols: table.length + 1,
+    items,
+    // 第一列是行标题，所以第 r 个字符落在第 r+1 格
+    pointers: hotCol >= 0 ? { 当前字符: hotCol + 1 } : {},
     note: opts.note,
   }
 }
@@ -176,33 +350,68 @@ const CODE_HUF_CODE = [
 ]
 
 function* runHuffmanBuild(data: number[]): AlgoRunner {
-  const weights = data.length ? data : [5, 29, 7, 8, 14, 23, 3, 11]
-  const tree = buildHuffman(weights)
-  let forest = weights.map((_, i) => `n${i}`)
-  let next = weights.length
-  const doneLeaves: string[] = []
+  const weights = data.length ? data : HUF_SAMPLE
+  const n = weights.length
+  /**
+   * 树是**边合并边长**的：一开始只有 n 个叶子结点，合并一次才 new 一个内部结点。
+   * 绝不能一次把整棵树算出来再画 —— 那样初始状态就会连着线和内部结点一起冒出来。
+   */
+  const nodes: HufNode[] = weights.map((w, i) => ({ id: `n${i}`, w, ch: charOf(i) }))
+  const tree: HufTree = { nodes, root: null }
+  const byId = new Map(nodes.map((nd) => [nd.id, nd]))
+  const nodeOf = (id: string): HufNode => byId.get(id)!
+  const wOf = (id: string): number => nodeOf(id).w
+
+  /** 当前森林（每棵树的根）。按"最左边那个叶子"排序，画面上结点移动的幅度最小 */
+  let forest = nodes.map((nd) => nd.id)
+  /** 游离结点池 = 还没被合并过的叶子，摆在树上方等着被选 */
+  let pool = [...forest]
+  let next = n
+  const cols = poolCols(n)
+
+  const inOrder = (ids: string[]): string[] =>
+    [...ids].sort(
+      (a, b) => Number(leftLeafId(byId, a).slice(1)) - Number(leftLeafId(byId, b).slice(1)),
+    )
+  const poolView = (hot: string[], note: string): BoardView =>
+    poolBoard(tree, pool, cols, { hot, note })
+  /** 森林里权值最小的两棵树（权值相同时按编号，保证结果确定） */
+  const smallest = (): [string, string] => {
+    const sorted = [...forest].sort((a, b) =>
+      wOf(a) !== wOf(b) ? wOf(a) - wOf(b) : a.localeCompare(b),
+    )
+    return [sorted[0]!, sorted[1]!]
+  }
+  /** 池子里被选走的那些（选中的可能已经是树里的内部结点了，那就一个也不删） */
+  const pickedFromPool = (a: string, b: string): string[] =>
+    pool.filter((id) => id === a || id === b)
+  const pickText = (picked: string[]): string =>
+    picked.length
+      ? `这一轮从池子里选走了 ${picked.map((id) => `${nodeOf(id).ch}(${wOf(id)})`).join(' 和 ')}`
+      : '这一轮选中的两棵已经在树里长出来了，池子里没有它们'
 
   yield {
     line: 3,
     action: 'init',
     array: forestWeights(tree, forest),
     tree: hufView(tree, forest, {
-      note: `森林里有 ${forest.length} 棵单结点树：${forestText(tree, forest)}（权值 = 字符出现次数）`,
+      note: `森林里有 ${n} 棵单结点树，彼此之间还没有任何连线：${forestText(tree, forest)}`,
     }),
-    comment: `① 先把每个权值变成一棵只有根结点的树，森林里一共 ${forest.length} 棵树：${forestText(tree, forest)}`,
-    vars: { n: weights.length, 森林: forest.length },
+    boards: [
+      poolView(
+        [],
+        `${n} 个权值就是 ${n} 个游离结点，各自独立地摆在上面；下面每合并一次，这里就少两个`,
+      ),
+    ],
+    comment: `① 先把每个权值变成一棵只有根结点的树：${forestText(tree, forest)}，一共 ${n} 棵、彼此之间一条连线都没有。它们都摆在上面等着被选中`,
+    vars: { n, 森林: n, 池子: n },
   }
 
-  for (let k = 1; k < weights.length; k++) {
-    const sorted = [...forest].sort((a, b) => {
-      const wa = tree.nodes[Number(a.slice(1))]!.w
-      const wb = tree.nodes[Number(b.slice(1))]!.w
-      return wa !== wb ? wa - wb : a.localeCompare(b)
-    })
-    const a = sorted[0]!
-    const b = sorted[1]!
-    const wa = tree.nodes[Number(a.slice(1))]!.w
-    const wb = tree.nodes[Number(b.slice(1))]!.w
+  for (let k = 1; k < n; k++) {
+    const [a, b] = smallest()
+    const wa = wOf(a)
+    const wb = wOf(b)
+    const picked = pickedFromPool(a, b)
 
     yield {
       line: 5,
@@ -213,8 +422,9 @@ function* runHuffmanBuild(data: number[]): AlgoRunner {
         pointers: { a: a, b: b },
         note: `本轮挑出权值最小的两棵：${wa} 和 ${wb}`,
       }),
-      comment: `③ 从森林的 ${forest.length} 棵树里挑出权值最小的两棵：${wa} 与 ${wb}（最小的 ${Math.min(wa, wb)} 一定能选上）`,
-      vars: { a: wa, b: wb, 森林: forest.length },
+      boards: [poolView(picked, pickText(picked))],
+      comment: `③ 从森林的 ${forest.length} 棵树里挑出权值最小的两棵：${wa} 和 ${wb}（${Math.min(wa, wb)} 是最小的，一定选得上）`,
+      vars: { a: wa, b: wb, 森林: forest.length, 池子: pool.length },
     }
 
     yield {
@@ -226,13 +436,17 @@ function* runHuffmanBuild(data: number[]): AlgoRunner {
         pointers: { a: a, b: b },
         note: `新根权值 = ${wa} + ${wb} = ${wa + wb}`,
       }),
-      comment: `④ 造一个新根，权值 = ${wa} + ${wb} = ${wa + wb}`,
+      boards: [poolView(picked, `新结点的权值 = ${wa} + ${wb} = ${wa + wb}`)],
+      comment: `④ 造一个新根结点，权值 = ${wa} + ${wb} = ${wa + wb}`,
       vars: { a: wa, b: wb, 新根: wa + wb },
     }
 
     const id = `n${next++}`
-    forest = forest.filter((x) => x !== a && x !== b)
-    forest.push(id)
+    const created: HufNode = { id, w: wa + wb, left: a, right: b }
+    nodes.push(created)
+    byId.set(id, created)
+    forest = inOrder([...forest.filter((x) => x !== a && x !== b), id])
+    pool = pool.filter((x) => x !== a && x !== b)
 
     yield {
       line: 8,
@@ -241,152 +455,149 @@ function* runHuffmanBuild(data: number[]): AlgoRunner {
       tree: hufView(tree, forest, {
         hot: [id],
         pointers: { 新根: id },
-        note: `新根 ${wa + wb} 的左孩子是 ${wa}，右孩子是 ${wb}`,
+        note: `${wa} 挂在左孩子、${wb} 挂在右孩子；森林还剩 ${forest.length} 棵树`,
       }),
-      comment: `⑤ 把 ${wa} 挂到左孩子、${wb} 挂到右孩子；合成后森林还剩 ${forest.length} 棵树：${forestText(tree, forest)}`,
-      vars: { 森林: forest.length, 新根: wa + wb },
+      boards: [
+        poolView(
+          [],
+          `${picked.length ? `池子里少了 ${picked.map((x) => nodeOf(x).ch).join(' 和 ')}，后面的结点依次往前补上空位；` : ''}池子还剩 ${pool.length} 个`,
+        ),
+      ],
+      comment: `⑤ 把 ${wa} 挂到左孩子、${wb} 挂到右孩子，合成一棵权值 ${wa + wb} 的新树；森林还剩 ${forest.length} 棵树：${forestText(tree, forest)}`,
+      vars: { 森林: forest.length, 新根: wa + wb, 池子: pool.length },
     }
   }
 
-  const total = tree.nodes[Number(tree.root!.slice(1))]!.w
-  doneLeaves.push(...weights.map((_, i) => `n${i}`))
+  const root = forest[0]!
+  tree.root = root
+  const total = wOf(root)
+  const wpl = huffmanCodes(tree).reduce((s, e) => s + e.w * e.code.length, 0)
   yield {
     line: 11,
     action: 'done',
     array: [total],
-    tree: hufView(tree, tree.root ? [tree.root] : [], {
-      done: doneLeaves,
+    tree: hufView(tree, [root], {
+      done: nodes.filter((nd) => nd.ch !== undefined).map((nd) => nd.id),
       note: `哈夫曼树建成，根结点权值 = ${total} = 所有叶子权值之和`,
     }),
-    comment: `⑦ 合并了 ${weights.length - 1} 次后森林里只剩一棵树，这就是哈夫曼树：根权值 ${total}，带权路径长度 WPL = ${total * 1}`,
-    vars: { 合并次数: weights.length - 1, 树根权值: total },
+    boards: [poolView([], '池子已经空了：所有游离结点都合并进树里了')],
+    comment: `⑦ 合并了 ${n - 1} 次后森林里只剩一棵树，这就是哈夫曼树：根结点权值 ${total}，带权路径长度 WPL = ${wpl}（= 每个叶子的权值 × 码长，加起来）`,
+    vars: { 合并次数: n - 1, 树根权值: total },
   }
 }
 
 function* runHuffmanCode(data: number[]): AlgoRunner {
-  const weights = data.length ? data : [5, 29, 7, 8, 14, 23, 3, 11]
+  const weights = data.length ? data : HUF_SAMPLE
   const tree = buildHuffman(weights)
   const table = huffmanCodes(tree).sort((x, y) => x.ch.localeCompare(y.ch))
   const byId = new Map(tree.nodes.map((n) => [n.id, n]))
-  /** 已经访问完的叶子字符 */
-  const doneCh = new Set<string>()
-  /** 走过的边：'父id>子id' */
-  const used = new Set<string>()
-
-  const rowOf = (ch: string): number => table.findIndex((e) => e.ch === ch)
-
-  const board = (
-    step: string,
-    hotRow: number,
-    opts: { codeText?: string; note: string; activeCell?: number },
-  ): BoardView => {
-    const items: CellItem[] = []
-    // 第一行是表头（tone 用 dim，和哈夫曼树的结论行区分开）
-    for (const h of ['字符', '权值', '编码']) items.push({ text: h, tone: 'dim' })
-    for (let r = 0; r < table.length; r++) {
-      const e = table[r]!
-      const isHot = r === hotRow
-      const finished = doneCh.has(e.ch)
-      const code = isHot && opts.codeText !== undefined ? opts.codeText : finished ? e.code : ''
-      items.push({
-        text: e.ch,
-        sub: String(e.w),
-        tone: finished ? 'done' : isHot ? 'hot' : 'base',
-      })
-      items.push({ text: String(e.w), tone: isHot ? 'hot' : finished ? 'done' : 'dim' })
-      items.push({ text: code || '···', tone: isHot ? 'hot' : finished ? 'done' : 'dim' })
-    }
-    return {
-      title: `哈夫曼编码表（${step}）`,
-      layout: 'grid',
-      cols: 3,
-      items,
-      pointers: hotRow >= 0 ? { 当前字符: (hotRow + 1) * 3 } : {},
-      note: opts.note,
-    }
+  /** 双亲表：从叶子往上回溯，才能走出"这个字符自己的那一条路" */
+  const parentOf = new Map<string, string>()
+  for (const n of tree.nodes) {
+    if (n.left) parentOf.set(n.left, n.id)
+    if (n.right) parentOf.set(n.right, n.id)
   }
+  /** 已经编码完成的叶子字符 */
+  const doneCh = new Set<string>()
 
-  const treeNow = (hot: string[]): TreeView => ({
-    nodes: tree.nodes.map((n) => ({
-      id: n.id,
-      value: n.w,
-      left: n.left ?? null,
-      right: n.right ?? null,
-      sub: n.ch ?? '—',
-    })),
-    root: tree.root,
-    hot,
-    done: tree.nodes.filter((n) => n.ch !== undefined && doneCh.has(n.ch)).map((n) => n.id),
-    note: '从根往下走：左孩子 = 0，右孩子 = 1',
-  })
+  /** 这个字符在编码表里是第几列 */
+  const colOf = (ch: string): number => table.findIndex((e) => e.ch === ch)
+
+  /** 树：走到哪哪个结点亮；编码表挂在树下面（不加 position，默认就在下方） */
+  const treeNow = (hot: string[], note?: string): TreeView =>
+    hufCodeView(tree, {
+      hot,
+      done: tree.nodes.filter((n) => n.ch !== undefined && doneCh.has(n.ch)).map((n) => n.id),
+      note,
+    })
+  const tableView = (
+    step: string,
+    hotCol: number,
+    opts: { codeText?: string; note: string },
+  ): BoardView => hufCodeTable(table, doneCh, step, hotCol, opts)
 
   yield {
     line: 1,
     action: 'init',
     array: weights.slice(),
-    boards: [board('准备', -1, { note: '还没有字符编好码' })],
-    comment: `哈夫曼树已经建好（根权值 ${byId.get(tree.root!)!.w}）。现在从根往下走给每个字符编码：向左记 0、向右记 1`,
+    tree: treeNow([], `哈夫曼树已经建好（根结点权值 ${byId.get(tree.root!)!.w}）。下面就沿着这棵树，一个字符一个字符地往下走`),
+    boards: [tableView('准备', -1, { note: '还没有字符编好码' })],
+    comment: `哈夫曼树已经建好了（根结点权值 ${byId.get(tree.root!)!.w}）。现在从根往下走给每个字符编码：向左记 0、向右记 1，走到叶子就是这个字符的编码`,
     vars: { 字符数: table.length },
   }
 
   for (const leaf of tree.nodes.filter((n) => n.ch !== undefined)) {
     const ch = leaf.ch!
     const w = leaf.w
-    const path: Array<{ id: string; side: 'left' | 'right' }> = []
-    let cur: HufNode | undefined = tree.root ? byId.get(tree.root) : undefined
+    /**
+     * 从根走到**这个叶子**的那条路（每个叶子只有一条）。
+     * 不能一路往左走到底 —— 那样每个字符都会得到最左边那个叶子的编码。
+     * 借双亲表从叶子往上回溯，才能保证走的是这个字符自己的那一条路。
+     */
+    const chain: string[] = [leaf.id]
+    for (let up = parentOf.get(leaf.id); up !== undefined; up = parentOf.get(up)) chain.push(up)
+    chain.reverse()
     let code = ''
 
     yield {
       line: 3,
       action: 'mark',
       array: weights.slice(),
-      boards: [board(`开始 ${ch}`, rowOf(ch), { codeText: '', note: `当前要编码的字符 ${ch}，权值 ${w}` })],
-      comment: `① 从哈夫曼树的根结点出发，准备给字符 ${ch} 编码`,
+      tree: treeNow(tree.root ? [tree.root] : [], `准备给字符 ${ch} 编码，先站到根结点上`),
+      boards: [
+        tableView(`开始 ${ch}`, colOf(ch), {
+          codeText: '',
+          note: `当前要编码的字符是 ${ch}（权值 ${w}），现在站在根结点 ${byId.get(tree.root!)!.w} 上，编码串还是空的`,
+        }),
+      ],
+      comment: `① 从哈夫曼树的根结点出发，准备给字符 ${ch}（权值 ${w}）编码`,
       vars: { 权值: w },
-      tree: treeNow(cur ? [cur.id] : []),
     }
 
-    while (cur && cur.ch === undefined) {
-      const goLeft = cur.left !== undefined
-      const childId = (goLeft ? cur.left : cur.right)!
-      const child = byId.get(childId)!
-      const side = goLeft ? 'left' : 'right'
-      path.push({ id: childId, side })
-      used.add(`${cur.id}>${childId}`)
+    for (let k = 1; k < chain.length; k++) {
+      const from = byId.get(chain[k - 1]!)!
+      const to = byId.get(chain[k]!)!
+      const goLeft = from.left === to.id
+      const bit = goLeft ? '0' : '1'
 
       yield {
         line: goLeft ? 8 : 10,
         action: 'compare',
         array: weights.slice(),
+        tree: treeNow(
+          [from.id, to.id],
+          `在结点 ${from.w} 处走${goLeft ? '左' : '右'}分支到 ${to.w}，这一位记 ${bit}`,
+        ),
         boards: [
-          board(`走 ${ch}`, rowOf(ch), {
+          tableView(`走 ${ch}`, colOf(ch), {
             codeText: code,
-            note: `从 ${cur.w} 走${goLeft ? '左' : '右'}分支到 ${child.w}，这一位记 ${goLeft ? '0' : '1'}`,
+            note: `从 ${from.w} 走${goLeft ? '左' : '右'}分支到 ${to.w}，编码多一位 ${bit}`,
           }),
         ],
-        comment: `${goLeft ? '③' : '④'} 在结点 ${cur.w} 处走${goLeft ? '左' : '右'}分支（到 ${child.w}），编码多一位 ${goLeft ? '0' : '1'}，当前是 ${code}${goLeft ? '0' : '1'}`,
+        comment: `${goLeft ? '③' : '④'} 在结点 ${from.w} 处走${goLeft ? '左' : '右'}分支（到结点 ${to.w}），这一位记 ${bit}，当前编码是 ${code}${bit}`,
         vars: { 权值: w },
-        tree: treeNow([cur.id, childId]),
       }
-      code += goLeft ? '0' : '1'
-      cur = child
+
+      code += bit
     }
 
     doneCh.add(ch)
-    const rowIdx = rowOf(ch)
     yield {
       line: 5,
       action: 'done',
       array: weights.slice(),
+      tree: treeNow(
+        [leaf.id],
+        `走到叶子结点 ${ch}（权值 ${w}），编码 ${code} 就写在它的小字里`,
+      ),
       boards: [
-        board(`完成 ${ch}`, rowIdx, {
+        tableView(`完成 ${ch}`, colOf(ch), {
           codeText: code,
           note: `字符 ${ch}（权值 ${w}）的编码 = ${code}，共 ${code.length} 位`,
         }),
       ],
-      comment: `② 走到叶子结点 ${ch}（权值 ${w}），这一路记下的 01 串就是它的编码：${ch} -> ${code}（${code.length} 位）`,
+      comment: `② 走到了叶子结点 ${ch}（权值 ${w}），这一路记下的 01 串就是它的编码：${ch} → ${code}（${code.length} 位），已经写进下面的编码表`,
       vars: { 权值: w, 码长: code.length },
-      tree: treeNow(cur ? [cur.id] : []),
     }
   }
 
@@ -395,14 +606,14 @@ function* runHuffmanCode(data: number[]): AlgoRunner {
     line: 12,
     action: 'done',
     array: weights.slice(),
+    tree: treeNow([], `编码表建好了：带权路径长度 WPL = ${totalBits} 位`),
     boards: [
-      board('完成', -1, {
+      tableView('完成', -1, {
         note: `编码表建好了，带权路径长度 WPL = ${totalBits} 位`,
       }),
     ],
-    comment: `两个字符的编码不会互为前缀（前缀码），所以解码时不会认错；整篇正文一共 ${totalBits} 位，WPL = ${totalBits}`,
+    comment: `任何两个字符的编码都不会互为前缀（这叫前缀码），所以解码时不会认错；整篇正文一共 ${totalBits} 位，WPL = ${totalBits}`,
     vars: { 总位数: totalBits },
-    tree: treeNow([]),
   }
 }
 
@@ -445,10 +656,41 @@ function heapBoard(
   }
 }
 
+/**
+ * 堆的数组：**长度就是数据规模** —— 选 5 个数据就画 5 格、选 12 个就画 12 格
+ * （以前一律截成 / 补成固定的 HEAP_N 格，于是"选了 5 却画出 9 个格子"）。
+ * 只有数据为空时才兜底成 HEAP_N 个 0，免得板子上一格都没有（校验不允许空板子）。
+ */
 function heapFrames(data: number[]): number[] {
-  const a = data.slice(0, HEAP_N)
-  for (let i = 0; i < HEAP_N; i++) if (a[i] === undefined) a[i] = 0
-  return a
+  return data.length ? data.slice() : new Array<number>(HEAP_N).fill(0)
+}
+
+/**
+ * 把数据摆成"**只有根结点**可能违反大根堆、其余子树都已经是大根堆"的样子 ——
+ * 这是"对 a[0] 做一次向下调整"这一课的前提。
+ *
+ * 数组里的值一个不少，只是换个位置：把 a[1..] 原地堆化，再把它放回根的位置。
+ * 默认数据本来就长这样，所以摆完一个字都不动；换成随机数据也照样成立。
+ */
+function heapSiftReady(raw: number[]): number[] {
+  const a = heapFrames(raw)
+  if (a.length <= 1) return a
+  const rest = a.slice(1)
+  for (let i = Math.floor(rest.length / 2) - 1; i >= 0; i--) {
+    let k = i
+    for (;;) {
+      const l = 2 * k + 1
+      if (l >= rest.length) break
+      const r = l + 1
+      const big = r < rest.length && rest[r]! > rest[l]! ? r : l
+      if (rest[k]! >= rest[big]!) break
+      const t = rest[k]!
+      rest[k] = rest[big]!
+      rest[big] = t
+      k = big
+    }
+  }
+  return [a[0]!, ...rest]
 }
 
 /** 一行说明孩子下标公式，堆的每一帧 note 都带上，用户不会混 */
@@ -1223,16 +1465,32 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     complexity: { time: 'O(n log n)', space: 'O(n)' },
     renderer: 'tree',
     codeLines: CODE_HUF_BUILD,
-    defaultData: () => [5, 29, 7, 8, 14, 23, 3, 11],
+    defaultData: () => HUF_SAMPLE.slice(),
+    // 数据规模 = **叶子个数**：选 7 就是 7 个权值、画面上 7 个结点（不是 2n-1 个）
+    sizes: [5, 6, 7, 8, 9, 10, 11, 12],
     initComment: (data) =>
-      `初始权值（对应字符 A~H）：[${data.join(', ')}]。每个权值先各成一棵单结点树，下面开始反复合并`,
+      `初始权值（对应字符 A~${charOf(data.length - 1)}）：[${data.join(', ')}]。每个权值先各成一棵只有根结点的树，摆在上面的是"游离结点池"，彼此之间还没有任何连线`,
     initTree: (data) => {
-      const w = data.length ? data : [5, 29, 7, 8, 14, 23, 3, 11]
-      const tree = buildHuffman(w)
-      const forest = w.map((_, i) => `n${i}`)
-      return hufView(tree, forest, {
-        note: `森林里有 ${w.length} 棵单结点树，每棵的权值就是对应字符的出现次数`,
-      })
+      const w = data.length ? data : HUF_SAMPLE
+      // 首帧：n 个叶子各自成为一棵只有根结点的树，**一条边都没有**
+      const nodes: HufNode[] = w.map((wt, i) => ({ id: `n${i}`, w: wt, ch: charOf(i) }))
+      return hufView(
+        { nodes, root: null },
+        nodes.map((nd) => nd.id),
+        { note: `森林里有 ${w.length} 棵单结点树，每棵的权值就是对应字符的出现次数；现在还没有任何连线` },
+      )
+    },
+    // 首帧是 engine 造的，游离结点池也要在第一帧就出现在树上方，只能从 initScene 给
+    initScene: (data) => {
+      const w = data.length ? data : HUF_SAMPLE
+      const nodes: HufNode[] = w.map((wt, i) => ({ id: `n${i}`, w: wt, ch: charOf(i) }))
+      return {
+        boards: [
+          poolBoard({ nodes, root: null }, nodes.map((nd) => nd.id), poolCols(w.length), {
+            note: `${w.length} 个权值就是 ${w.length} 个游离结点；每合并一次，这里就少两个（后面的往前补空位）`,
+          }),
+        ],
+      }
     },
     createRunner: runHuffmanBuild,
   },
@@ -1243,30 +1501,22 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     group: '哈夫曼树',
     summary: '从根往下走，向左记 0、向右记 1，走到叶子就是该字符的编码',
     complexity: { time: 'O(n)', space: 'O(n)' },
-    renderer: 'scene',
+    // 编码要"看得出走在树上"，所以也换成树渲染器；编码表挂在树下面
+    renderer: 'tree',
     codeLines: CODE_HUF_CODE,
-    defaultData: () => [5, 29, 7, 8, 14, 23, 3, 11],
+    defaultData: () => HUF_SAMPLE.slice(),
+    sizes: [5, 6, 7, 8, 9, 10, 11, 12],
     initComment: (data) =>
-      `权值 [${data.join(', ')}] 已建成哈夫曼树，现在从根往下给每个字符编码：向左记 0、向右记 1`,
+      `权值 [${data.join(', ')}] 已经建成一棵哈夫曼树（就画在右边），现在从根往下给每个字符编码：向左记 0、向右记 1`,
+    initTree: (data) => hufCodeView(buildHuffman(data.length ? data : HUF_SAMPLE), { hot: [] }),
     initScene: (data) => {
-      const w = data.length ? data : [5, 29, 7, 8, 14, 23, 3, 11]
+      const w = data.length ? data : HUF_SAMPLE
       const table = huffmanCodes(buildHuffman(w)).sort((x, y) => x.ch.localeCompare(y.ch))
-      const items: CellItem[] = []
-      for (const h of ['字符', '权值', '编码']) items.push({ text: h, tone: 'dim' })
-      for (const e of table) {
-        items.push({ text: e.ch, sub: String(e.w), tone: 'base' })
-        items.push({ text: String(e.w), tone: 'dim' })
-        items.push({ text: '···', tone: 'dim' })
-      }
       return {
         boards: [
-          {
-            title: '哈夫曼编码表（还没开始）',
-            layout: 'grid',
-            cols: 3,
-            items,
+          hufCodeTable(table, new Set<string>(), '还没开始', -1, {
             note: '左子树 = 0，右子树 = 1；每个字符的编码都是走到它的叶子的那一条路',
-          },
+          }),
         ],
       }
     },
@@ -1275,15 +1525,19 @@ export const treeApplySpecs: AlgorithmSpec[] = [
   {
     id: 'heap-build',
     name: '建堆（自下而上）',
-    category: 'tree',
+    category: 'sort',
     group: '堆',
     summary: '从最后一个非叶结点 n/2-1 往前，逐个向下调整，O(n) 建堆',
     complexity: { time: 'O(n)', space: 'O(1)' },
     renderer: 'scene',
     codeLines: CODE_HEAP_BUILD,
     defaultData: () => [4, 10, 3, 5, 1, 2, 9, 7, 8],
-    initComment: (data) =>
-      `初始数组 [${data.slice(0, HEAP_N).join(', ')}]（下标 0 开始）。要把它整理成**大根堆**：每个结点都不小于它的两个孩子`,
+    // 数组长度 = 数据规模：选几个数据就画几个"结点"（数组格子就是堆的结点）
+    sizes: TREE_SIZES,
+    initComment: (data) => {
+      const a = heapFrames(data)
+      return `初始数组 [${a.join(', ')}]（下标 0 开始，一共 ${a.length} 个结点）。要把它整理成**大根堆**：每个结点都不小于它的两个孩子`
+    },
     initScene: (data) => {
       const a = heapFrames(data)
       return {
@@ -1292,7 +1546,7 @@ export const treeApplySpecs: AlgorithmSpec[] = [
             title: '初始数组（还不是堆）',
             layout: 'row',
             items: a.map((v, i) => ({ text: String(v), sub: String(i), tone: 'base' as const })),
-            note: `${HEAP_FORMULA}　n = ${HEAP_N}，最后一个非叶结点下标是 n/2-1 = ${Math.floor(HEAP_N / 2) - 1}`,
+            note: `${HEAP_FORMULA}　n = ${a.length}，最后一个非叶结点下标是 n/2-1 = ${Math.floor(a.length / 2) - 1}`,
           },
         ],
       }
@@ -1302,15 +1556,22 @@ export const treeApplySpecs: AlgorithmSpec[] = [
   {
     id: 'heap-sift',
     name: '堆调整（向下调整 / 筛选）',
-    category: 'tree',
+    category: 'sort',
     group: '堆',
     summary: '和**较大的**那个孩子比较，不满足大根堆就交换，然后继续往下',
     complexity: { time: 'O(log n)', space: 'O(1)' },
     renderer: 'scene',
     codeLines: CODE_HEAP_SIFT,
     defaultData: () => [1, 9, 8, 6, 5, 7, 4, 3, 2],
-    initComment: (data) =>
-      `数组 [${data.slice(0, HEAP_N).join(', ')}] 里除了根结点 a[0] = ${data[0]}，其余子树都已经是大根堆。现在单独对 a[0] 做一次向下调整`,
+    // 数组长度 = 数据规模
+    sizes: TREE_SIZES,
+    // 不管选多大规模、随机出什么数据，都先摆成"只有根不满足大根堆"的样子，
+    // 否则"向下调整 a[0]"的前提不成立，解说词就成了假话
+    prepareData: heapSiftReady,
+    initComment: (data) => {
+      const a = heapFrames(data)
+      return `数组 [${a.join(', ')}]（一共 ${a.length} 个结点）里除了根结点 a[0] = ${a[0]}，其余子树都已经是大根堆。现在单独对 a[0] 做一次向下调整`
+    },
     initScene: (data) => {
       const a = heapFrames(data)
       return {
@@ -1341,6 +1602,9 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_UF_FIND,
     defaultData: () => [0, 1, 2, 3, 4, 5, 6, 7],
+    // 并查集的分组是**摆好的**：{0,1,2} 一条 3 层的链（演示路径压缩）、{3,4}、{5,6,7}，
+    // 一共 8 个结点。换成别的规模就没有这组结构了，所以只给一个合法规模，不误导用户
+    sizes: [UF_N],
     initComment: () =>
       '双亲表示法：parent[i] = i 的是根，其余结点用向上的虚线指着自己的双亲。初始分组是 {0,1,2}、{3,4}、{5,6,7}',
     initTree: (data) => {
@@ -1365,6 +1629,8 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_UF_UNION,
     defaultData: () => [0, 1, 2, 3, 4, 5, 6, 7],
+    // 同 uf-find：8 个结点、固定的三组，规模只有一个合法值
+    sizes: [UF_N],
     initComment: () =>
       '双亲表示法 + 秩（结点下方小字）。合并前先各自 Find 到根，再按秩合并：秩小的根挂到秩大的根下面',
     initTree: (data) => {

@@ -14,6 +14,15 @@ import type { AlgorithmSpec, AlgoRunner, TreeNodeSnapshot, TreeView } from '@/co
  */
 const MAX_NODES = 15
 
+/**
+ * 「树与二叉树」里**一个数据就是一个结点**的那批算法共用的数据规模候选值。
+ *
+ * 这类算法的画面完全由数据个数决定（数据按层序还原成完全二叉树），
+ * 5~12 都摆得下，而且不超过 makeCompleteTree 的 MAX_NODES = 15。
+ * 形状定死的那些算法（AVL、哈夫曼、并查集…）在自己文件里另外声明 sizes。
+ */
+export const TREE_SIZES: number[] = [5, 6, 7, 8, 9, 10, 11, 12]
+
 export function nodeId(i: number): string {
   return `n${i}`
 }
@@ -134,12 +143,14 @@ export const treeSpecs: AlgorithmSpec[] = [
     id: 'tree-preorder-rec',
     name: '先序遍历（递归）',
     category: 'tree',
-    group: '遍历',
+    group: '二叉树的遍历',
     summary: '根 -> 左 -> 右，递归实现',
     complexity: { time: 'O(n)', space: 'O(h)，h 是树高' },
     renderer: 'tree',
     codeLines: CODE_PRE,
     defaultData: () => [1, 2, 3, 4, 5, 6, 7],
+    // 结点数就是数据个数：选 5 就画 5 个、选 12 就画 12 个
+    sizes: TREE_SIZES,
     initTree: (data) => completeTreeView(data, { note: '先序遍历：根 -> 左 -> 右' }),
     createRunner: runPreOrder,
   },

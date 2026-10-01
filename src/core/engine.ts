@@ -31,6 +31,8 @@ function cloneList(lv: ListView): ListView {
 function cloneBoards(boards: BoardView[]): BoardView[] {
   return boards.map((b) => ({
     title: b.title,
+    // position 千万别漏：漏了 position: 'top' 的板子会退化成默认，跑到树下面去
+    position: b.position,
     layout: b.layout,
     cols: b.cols,
     items: b.items.map((it) => ({ ...it })),

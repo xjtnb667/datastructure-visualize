@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { PALETTE, css, type RGB } from '@/core/palette'
@@ -34,6 +34,9 @@ const animMs = computed(() => `${animDuration.value}ms`)
  * 所以这些算法额外给一块数组板画栈 / 队列本身，这里把它接在树下面一起显示。
  */
 const boards = computed(() => currentStep.value?.boards ?? [])
+/** 摆在树**上方**的板子（哈夫曼构造的"游离结点池"） */
+const topBoards = computed(() => boards.value.filter((b) => b.position === 'top'))
+const bottomBoards = computed(() => boards.value.filter((b) => b.position !== 'top'))
 
 /** 一个结点往下连的孩子（二叉树取 left/right，多叉树取 children） */
 function childrenOf(n: TreeNodeSnapshot): string[] {
@@ -151,6 +154,30 @@ const py = (p: Placed) => PAD + p.gy * Y_STEP
 const boxW = computed(() => PAD * 2 + (Math.max(0, ...placed.value.map((p) => p.gx)) + 1) * X_STEP)
 const boxH = computed(() => PAD * 2 + (Math.max(0, ...placed.value.map((p) => p.gy)) + 1) * Y_STEP)
 
+/*
+ * 整棵树的自动缩放。
+ * 树 + 板子超出可用区域时把树整体缩小，尽量让**整棵树始终在画面里**；
+ * 最小缩到 2/3（再小就看不清了），到那时宁可让它上下滚动。
+ * 这是给哈夫曼构造准备的：上方有游离结点池、下方树还在长，很容易超高。
+ */
+const scrollerEl = ref<HTMLElement | null>(null)
+const scale = ref(1)
+function fitTree(): void {
+  const el = scrollerEl.value
+  if (!el) return
+  const needW = boxW.value
+  const needH = boxH.value
+  if (!needW || !needH) return
+  const raw = Math.min(1, (el.clientWidth - 12) / needW, (el.clientHeight - 12) / needH)
+  scale.value = Math.max(2 / 3, raw)
+}
+watch([boxW, boxH, () => placed.value.length], () => void nextTick(fitTree))
+onMounted(() => {
+  fitTree()
+  window.addEventListener('resize', fitTree)
+})
+onBeforeUnmount(() => window.removeEventListener('resize', fitTree))
+
 const pos = computed(() => {
   const m = new Map<string, Placed>()
   for (const p of placed.value) m.set(p.node.id, p)
@@ -234,8 +261,22 @@ const pointerLabels = computed(() => {
 <template>
   <div v-if="!tv" class="empty">该算法没有树结构</div>
   <div v-else class="tree-wrap">
-    <div class="scroller">
-      <div class="board" :style="{ width: `${boxW}px`, height: `${boxH}px`, '--anim': animMs }">
+    <!-- 游离结点池之类挂在树上方的东西 -->
+    <div v-if="topBoards.length" class="boards-slot boards-top">
+      <ScenePanel only="top" />
+    </div>
+
+    <div ref="scrollerEl" class="scroller">
+      <div
+        class="board"
+        :style="{
+          width: `${boxW}px`,
+          height: `${boxH}px`,
+          '--anim': animMs,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top center',
+        }"
+      >
         <svg class="edges" :width="boxW" :height="boxH">
           <!-- 父子实线：同时给 d 属性和 CSS d，支持的浏览器就走 CSS（能过渡） -->
           <path
@@ -288,9 +329,9 @@ const pointerLabels = computed(() => {
 
     <p v-if="tv.note" class="tree-note">{{ tv.note }}</p>
 
-    <!-- 栈 / 队列的画面：接在树下面 -->
-    <div v-if="boards.length" class="boards-slot">
-      <ScenePanel />
+    <!-- 栈 / 队列 / 存储结构等板子：接在树下面 -->
+    <div v-if="bottomBoards.length" class="boards-slot">
+      <ScenePanel only="bottom" />
     </div>
   </div>
 </template>
@@ -306,8 +347,17 @@ const pointerLabels = computed(() => {
 .scroller {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  /* 只允许上下滚动：横向超出靠自动缩放解决，不要出现左右滚动条 */
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 10px 0;
+}
+
+/* 树上方那块（游离结点池）：分隔线画在下边 */
+.boards-top {
+  border-top: none;
+  border-bottom: 1px solid #232a35;
+  padding-bottom: 6px;
 }
 
 /* 树下面的栈 / 队列 / 存储结构板子：按内容高度自适应，最多占 70% 再内部滚动 */
