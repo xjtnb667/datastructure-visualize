@@ -29,11 +29,16 @@ function charOf(i: number): string {
 
 /**
  * 兜底规模。
- *   HEAP_N —— 堆的数组长度现在**跟着数据规模走**，只有数据为空时才用这 9 个 0 撑一块板子；
- *   UF_N   —— 并查集的三组结构（{0,1,2} / {3,4} / {5,6,7}）就摆成 8 个结点，所以它只有这一个规模。
+ *   HEAP_N   —— 堆的数组长度现在**跟着数据规模走**，只有数据为空时才用这 9 个 0 撑一块板子；
+ *   UF_SIZES —— 并查集支持的结点个数（5..9），元素个数 = 数据规模，
+ *               初始分组由 ufInit 按 n 确定性地摆出来（不再只有写死的 8 个结点一种规模）。
  */
 const HEAP_N = 9
-const UF_N = 8
+const UF_SIZES = [5, 6, 7, 8, 9]
+const UF_MIN_N = UF_SIZES[0]!
+const UF_MAX_N = UF_SIZES[UF_SIZES.length - 1]!
+/** 并查集的默认数据：7 个元素，刚好摆成 {0,1,2} {3,4} {5,6} 三组 */
+const UF_DEFAULT = [0, 1, 2, 3, 4, 5, 6]
 
 /* ------------------------------------------------------------------ *
  * 一、哈夫曼树
@@ -1201,18 +1206,68 @@ const CODE_UF_UNION = [
   '}',
 ]
 
+/** 并查集的元素个数 = 数据规模；超出 5..9 就夹到最近的合法值 */
+function ufSize(data: number[]): number {
+  if (data.length < UF_MIN_N) return UF_MIN_N
+  if (data.length > UF_MAX_N) return UF_MAX_N
+  return data.length
+}
+
 /**
- * 演示用的初始并查集，三个集合：
- *   {0,1,2} 根 = 2，树高 3（0 -> 1 -> 2）
- *   {3,4}   根 = 4，树高 2（3 -> 4）
- *   {5,6,7} 根 = 7，树高 2（5 -> 7，6 -> 7）
- * Find 演示查 0（0 -> 1 -> 2 这条路正好能看出路径压缩的价值），
- * Union 演示把 {3,4} 合并进 {5,6,7}（秩 0 的小树挂到秩 2 的大树下）。
+ * 把随机 / 原始数据规整成并查集要的 5..9 个元素。
+ *
+ * 元素的值本身不参与运算（并查集的"指针"全在 parent 数组里），
+ * 所以这里直接铺成 0..n-1：结点显示的值和它的下标永远一致，讲起来不会串。
  */
-function ufInit(): { parent: number[]; rank: number[] } {
-  const parent = [1, 2, 2, 4, 4, 7, 7, 7]
-  const rank = [0, 1, 2, 0, 0, 0, 1, 2]
+export function prepareData(raw: number[]): number[] {
+  const n = ufSize(raw)
+  return Array.from({ length: n }, (_, i) => i)
+}
+
+/**
+ * 演示用的初始并查集，**按数据规模 n 确定性地摆**（不用随机数，同一个 n 每次画出来都一样）：
+ *
+ *   {0,1,2}      —— 一条 3 层的链 0 -> 1 -> 2（根 2、秩 2），
+ *                   所有规模下都固定不变；Find 就查 0，这条路最能看出路径压缩的价值；
+ *   其余 3..n-1  —— **均分成两拨**，每拨摆成"星形"（其余结点都直接挂在根上，根的秩 1）；
+ *                   n = 5 时只剩 2 个结点，不再分拨，直接算作一拨。
+ *
+ * 于是五个规模长这样（元素个数刚好就是 n）：
+ *   n=5 -> {0,1,2} {3,4}
+ *   n=6 -> {0,1,2} {3,4} {5}
+ *   n=7 -> {0,1,2} {3,4} {5,6}
+ *   n=8 -> {0,1,2} {3,4,5} {6,7}
+ *   n=9 -> {0,1,2} {3,4,5} {6,7,8}
+ *
+ * 约定：parent[i] === i 表示 i 是根（自己指自己）；rank 是"根到最深叶子的边数"，
+ * 所以链 {0,1,2} 的根秩 2、星形的根秩 1、单结点集合的根秩 0 —— 根结点的秩就反映树高。
+ */
+function ufInit(n: number): { parent: number[]; rank: number[] } {
+  const parent = Array.from({ length: n }, (_, i) => i)
+  const rank = Array.from({ length: n }, () => 0)
+
+  // 第一拨：0 -> 1 -> 2 一条链（固定不随 n 变），根是 2
+  parent[0] = 1
+  parent[1] = 2
+  rank[1] = 1
+  rank[2] = 2
+
+  const rest = n - 3
+  if (rest > 0) {
+    // 剩下的均分成两拨；只剩 2 个（n = 5）时不再分，合成一拨
+    const mid = rest >= 3 ? 3 + Math.ceil(rest / 2) : n
+    ufStar(parent, rank, 3, mid)
+    ufStar(parent, rank, mid, n)
+  }
   return { parent, rank }
+}
+
+/** 把 [from, to) 这一拨摆成星形：根是 to-1，其余结点都直接挂在根上（树高 2，根的秩 1） */
+function ufStar(parent: number[], rank: number[], from: number, to: number): void {
+  if (to <= from) return
+  const root = to - 1
+  rank[root] = to - from >= 2 ? 1 : 0
+  for (let i = from; i < root; i++) parent[i] = root
 }
 
 /** 顺着 parent 找到根 */
@@ -1222,17 +1277,37 @@ function ufRoot(parent: number[], x: number): number {
   return r
 }
 
+/** 从 x 走到根要几步（边的条数） */
+function ufDepth(parent: number[], x: number): number {
+  let d = 0
+  for (let i = x; parent[i] !== i; i = parent[i]!) d++
+  return d
+}
+
+/** 当前有几个集合 */
+function ufGroupCount(parent: number[]): number {
+  let c = 0
+  for (let i = 0; i < parent.length; i++) if (parent[i] === i) c++
+  return c
+}
+
+/** 根 r 这个集合里有哪些结点（升序） */
+function ufMembers(parent: number[], r: number): number[] {
+  const out: number[] = []
+  for (let i = 0; i < parent.length; i++) if (ufRoot(parent, i) === r) out.push(i)
+  return out
+}
+
 function* runUfFind(data: number[]): AlgoRunner {
-  const n = data.length > 1 ? data.length : UF_N
-  const init = ufInit()
-  const parent = init.parent.slice(0, n)
-  const rank = init.rank.slice(0, n)
-  // 让前 n 个元素里的根仍然指向自己（截断后可能指向不存在的下标）
-  for (let i = 0; i < n; i++) if (parent[i]! >= n) parent[i] = i
-  // 查 0 号元素：它向上要经过 0 -> 1 -> 2，路径够长，最能看出路径压缩的价值
+  const n = ufSize(data)
+  const { parent, rank } = ufInit(n)
+  const groups0 = ufGroupCount(parent)
+  // 查 0 号元素：0 -> 1 -> 2 这条链在所有规模下都固定，是画面里最深、最能看出路径压缩价值的一条路
   const x = 0
   /** find 走一遍，路上经过的结点记下来（含根） */
   const seen: number[] = []
+  const parentBefore = parent.slice()
+  const stepsBefore = ufDepth(parent, x)
 
   yield {
     line: 2,
@@ -1240,10 +1315,10 @@ function* runUfFind(data: number[]): AlgoRunner {
     array: parent.slice(),
     tree: ufView(parent, rank, {
       pointers: { x: `u${x}` },
-      note: `parent 数组 = [${parent.join(', ')}]，现在有这些集合：${ufGroups(parent)}`,
+      note: `parent 数组 = [${parent.join(', ')}]，一共 ${n} 个元素、${groups0} 个集合：${ufGroups(parent)}`,
     }),
-    comment: `① 双亲表示法：parent[i] 就是 i 的双亲，向上的虚线就是这条双亲指针，自己指向自己的结点是根。parent = [${parent.join(', ')}]，当前分组 ${ufGroups(parent)}。现在要查元素 ${x} 属于哪个集合`,
-    vars: { x, parent: parent[x] },
+    comment: `① r = x = ${x}，先假定它就是根。双亲表示法里 parent[i] 就是 i 的双亲，向上的虚线是这条双亲指针，自己指向自己的结点是根。数据规模 n = ${n}，parent = [${parent.join(', ')}]，分成 ${groups0} 个集合：${ufGroups(parent)}。${x} 在一条 3 层的链上，压缩前要走 ${stepsBefore} 步才能到根`,
+    vars: { n, x, 组数: groups0, 压缩前步数: stepsBefore },
   }
 
   // 第一遍：找出根，顺便把路上经过的结点记进 seen
@@ -1265,9 +1340,9 @@ function* runUfFind(data: number[]): AlgoRunner {
       }),
       comment:
         p === r
-          ? `走到 parent[${r}] = ${r}：${r} 就是根，元素 ${x} 属于根为 ${r} 的集合`
-          : `② parent[${r}] = ${p}，而 ${r} 自己不是根，所以指针往上跳到双亲 ${p}`,
-      vars: { x, 当前: r, 双亲: p },
+          ? `① 走到 parent[${r}] = ${r}：${r} 就是根，元素 ${x} 属于根为 ${r} 的集合`
+          : `① parent[${r}] = ${p}，而 ${r} 自己不是根，所以指针往上跳到双亲 ${p}`,
+      vars: { n, x, 当前: r, 双亲: p },
     }
     if (p === r) break
     r = p
@@ -1280,10 +1355,10 @@ function* runUfFind(data: number[]): AlgoRunner {
     tree: ufView(parent, rank, {
       hot: [`u${r}`],
       pointers: { 根: `u${r}` },
-      note: `查找路径：${[...seen].reverse().join(' -> ')}，根是 ${r}`,
+      note: `查找路径：${seen.join(' -> ')}，根是 ${r}`,
     }),
-    comment: `⑤ 查找结束：元素 ${x} 的根是 ${r}，这条路一共走了 ${seen.length - 1} 步：${seen.map((i) => i).join(' -> ')}`,
-    vars: { x, 根: r, 路径长度: seen.length - 1 },
+    comment: `① 一路走到底：元素 ${x} 的根是 ${r}，这条路走了 ${stepsBefore} 步：${seen.join(' -> ')}。接下来做路径压缩，把路上的结点直接挂到根上`,
+    vars: { n, x, 根: r, 路径长度: stepsBefore },
   }
 
   // 路径压缩：把路上每个结点直接挂到根上（本来就已经是根的孩子的不动）
@@ -1302,11 +1377,12 @@ function* runUfFind(data: number[]): AlgoRunner {
         pointers: { 压缩: `u${i}`, 根: `u${r}` },
         note: `把 ${i} 直接挂到根 ${r} 下：parent[${i}] 由 ${old} 改成 ${r}`,
       }),
-      comment: `④ 路径压缩：把路上经过的 ${i} 直接挂到根 ${r} 下面，parent[${i}] 由 ${old} 改成 ${r}（下次再查 ${i} 就一步到根）`,
-      vars: { 压缩结点: i, 根: r },
+      comment: `②③ 路径压缩：把路上经过的 ${i} 直接挂到根 ${r} 下面，parent[${i}] 由 ${old} 改成 ${r}（下次再查 ${i} 就一步到根）`,
+      vars: { n, 压缩结点: i, 根: r },
     }
   }
 
+  const stepsAfter = ufDepth(parent, x)
   yield {
     line: 9,
     action: 'mark',
@@ -1314,16 +1390,13 @@ function* runUfFind(data: number[]): AlgoRunner {
     tree: ufView(parent, rank, {
       hot: [`u${r}`],
       pointers: { 根: `u${r}` },
-      note: `压缩后 parent = [${parent.join(', ')}]`,
+      note: `压缩前 parent = [${parentBefore.join(', ')}] → 压缩后 parent = [${parent.join(', ')}]`,
     }),
-    comment: `⑤ 返回根 r = ${r}。压缩后 parent = [${parent.join(', ')}]，${compressed.length ? `刚被压缩的结点 ${compressed.join('、')} 现在都直接指着根` : '路上结点的双亲本来就是根'}，树变矮了`,
-    vars: { x, 根: r, 压缩结点数: compressed.length },
+    comment: `④ 返回根 r = ${r}。压缩前 parent = [${parentBefore.join(', ')}]，压缩后 parent = [${parent.join(', ')}]，${compressed.length ? `刚被压缩的结点 ${compressed.join('、')} 现在都直接指着根` : '路上结点的双亲本来就是根'}，树变矮了`,
+    vars: { n, x, 根: r, 压缩结点数: compressed.length, 组数: ufGroupCount(parent) },
   }
 
   // 再查一次，走的是压缩后的近路
-  const before = seen.length - 1
-  let after = 0
-  for (let i = x; parent[i] !== i; i = parent[i]!) after++
   yield {
     line: 2,
     action: 'mark',
@@ -1331,10 +1404,10 @@ function* runUfFind(data: number[]): AlgoRunner {
     tree: ufView(parent, rank, {
       hot: [`u${x}`],
       pointers: { x: `u${x}`, 根: `u${r}` },
-      note: `再查一次 ${x}：现在只要 ${after} 步就到根`,
+      note: `再查一次 ${x}：压缩前 ${stepsBefore} 步，压缩后 ${stepsAfter} 步就到根`,
     }),
-    comment: `① 压缩完再查一次元素 ${x}：这次只要 ${after} 步就到根 ${r}，压缩前要 ${before} 步 —— 这就是路径压缩的价值，以后再查都是近似 O(1)`,
-    vars: { x, 压缩后步数: after, 压缩前步数: before },
+    comment: `④ 压缩完再查一次元素 ${x}：压缩前要走 ${stepsBefore} 步才到根 ${r}，压缩后只要走 ${stepsAfter} 步 —— 这就是路径压缩的价值，以后再查都是近似 O(1)`,
+    vars: { n, x, 压缩前步数: stepsBefore, 压缩后步数: stepsAfter },
   }
 
   const doneUf = parent.map((_, i) => `u${i}`).filter((_, i) => parent[i] === r || i === r)
@@ -1348,26 +1421,31 @@ function* runUfFind(data: number[]): AlgoRunner {
       done: doneUf,
       note: `最终 parent = [${parent.join(', ')}]，分组：${ufGroups(parent)}`,
     }),
-    comment: `查找结束，返回根 ${r}。最终 parent = [${parent.join(', ')}]，分组是 ${ufGroups(parent)}；树变矮以后，以后所有 Find 都快了`,
-    vars: { x, 根: r, 集合大小: doneUf.length },
+    comment: `④ 查找结束，返回根 ${r}。最终 parent = [${parent.join(', ')}]，一共 ${n} 个元素、${ufGroupCount(parent)} 个集合：${ufGroups(parent)}；树变矮以后，以后所有 Find 都快了`,
+    vars: { n, x, 根: r, 集合大小: doneUf.length },
   }
 }
 
 function* runUfUnion(data: number[]): AlgoRunner {
-  const n = data.length > 1 ? data.length : UF_N
-  const init = ufInit()
-  const parent = init.parent.slice(0, n)
-  const rank = init.rank.slice(0, n)
-  for (let i = 0; i < n; i++) if (parent[i]! >= n) parent[i] = i
+  const n = ufSize(data)
+  const { parent, rank } = ufInit(n)
+  const groups0 = ufGroupCount(parent)
 
-  const x = n - 1
-  // 第二个参数挑 4：它所在的树又小又矮（{3,4}，秩 0），挂到大树下面刚好演示"小树挂大树"
-  const y = Math.min(n - 4, 4)
+  /*
+   * 演示"按秩合并"的两个元素（所有规模下都这么挑，画面才稳定）：
+   *   x = 3 —— 它在第二拨里，自己不是根，往上一步到那一拨的根（星形，秩 1）；
+   *   y = 0 —— 它在 {0,1,2} 这条链的链尾，往上两步才到根 2（秩 2）。
+   * 两个根的秩一定是 1 < 2，所以永远走"秩小的树挂到秩大的树下"这条分支。
+   */
+  const x = 3
+  const y = 0
   const rx = ufRoot(parent, x)
   const ry = ufRoot(parent, y)
   const high = rank[rx]! >= rank[ry]! ? rx : ry
   const low = high === rx ? ry : rx
   const same = rx === ry
+  const membersX = ufMembers(parent, rx)
+  const membersY = ufMembers(parent, ry)
 
   yield {
     line: 2,
@@ -1375,10 +1453,10 @@ function* runUfUnion(data: number[]): AlgoRunner {
     array: parent.slice(),
     tree: ufView(parent, rank, {
       pointers: { x: `u${x}`, y: `u${y}` },
-      note: `parent = [${parent.join(', ')}]；秩写在结点下面的小字里，当前分组 ${ufGroups(parent)}`,
+      note: `parent = [${parent.join(', ')}]；秩写在结点下面的小字里，一共 ${n} 个元素、${groups0} 个集合 ${ufGroups(parent)}`,
     }),
-    comment: `要从元素 ${x}（根 ${rx}）和元素 ${y}（根 ${ry}）开始合并。parent = [${parent.join(', ')}]，结点下方小字是秩（树高的上界）：${ufGroups(parent)}`,
-    vars: { x, y, rx, ry },
+    comment: `数据规模 n = ${n}，合并前要各自 Find 到根。要从元素 ${x}（根 ${rx}）和元素 ${y}（根 ${ry}）开始。parent = [${parent.join(', ')}]，结点下方的小字就是秩：${ufGroups(parent)}`,
+    vars: { n, x, y, rx, ry, 组数: groups0 },
   }
 
   yield {
@@ -1390,8 +1468,8 @@ function* runUfUnion(data: number[]): AlgoRunner {
       pointers: { x: `u${x}`, rx: `u${rx}` },
       note: `find(${x}) 一路上到根 rx = ${rx}`,
     }),
-    comment: `① 先 find(${x})：从 ${x} 顺着双亲往上走，得到它所在集合的根 rx = ${rx}（秩 ${rank[rx]}）`,
-    vars: { x, rx, 秩: rank[rx]! },
+    comment: `① 先 find(${x})：从 ${x} 顺着双亲往上走一步就到根 rx = ${rx}（秩 ${rank[rx]}），它所在集合是 {${membersX.join(',')}}，一共 ${membersX.length} 个结点`,
+    vars: { n, x, rx, 秩: rank[rx]!, 集合大小: membersX.length },
   }
 
   yield {
@@ -1403,8 +1481,8 @@ function* runUfUnion(data: number[]): AlgoRunner {
       pointers: { y: `u${y}`, ry: `u${ry}` },
       note: `find(${y}) 一路上到根 ry = ${ry}`,
     }),
-    comment: `① 再 find(${y})：从 ${y} 顺着双亲往上走，得到根 ry = ${ry}（秩 ${rank[ry]}）`,
-    vars: { y, ry, 秩: rank[ry]! },
+    comment: `① 再 find(${y})：从 ${y} 顺着双亲往上走（${y} → 1 → ${ry}）才到根 ry = ${ry}（秩 ${rank[ry]}），它所在集合是 {${membersY.join(',')}}，一共 ${membersY.length} 个结点`,
+    vars: { n, y, ry, 秩: rank[ry]!, 集合大小: membersY.length },
   }
 
   if (same) {
@@ -1419,7 +1497,7 @@ function* runUfUnion(data: number[]): AlgoRunner {
         note: `rx = ry = ${rx}，本来就在一个集合里`,
       }),
       comment: `② rx = ry = ${rx}，两个元素本来就在同一个集合里，什么都不用做（这正是并查集"顺手判环"的原理）`,
-      vars: { rx, ry },
+      vars: { n, rx, ry },
     }
     return
   }
@@ -1434,9 +1512,10 @@ function* runUfUnion(data: number[]): AlgoRunner {
       note: `比较两棵树的秩：${rank[rx]} 与 ${rank[ry]}`,
     }),
     comment: `③ 按秩合并：比较两个根的秩 ${rank[rx]} 与 ${rank[ry]}。规则是**秩小的树挂到秩大的树下**，这样合并后新树的高不会超过原来高的那棵，不会越并越深`,
-    vars: { rx, ry, 秩x: rank[rx]!, 秩y: rank[ry]! },
+    vars: { n, rx, ry, 秩x: rank[rx]!, 秩y: rank[ry]! },
   }
 
+  const parentBefore = parent.slice()
   parent[low] = high
   const sameRank = rank[rx] === rank[ry]
   if (sameRank) rank[high] = rank[high]! + 1
@@ -1451,9 +1530,9 @@ function* runUfUnion(data: number[]): AlgoRunner {
       note: `parent[${low}] = ${high}：把根 ${low} 挂到根 ${high} 下面${sameRank ? `，秩相同所以 rank[${high}] 加 1 变成 ${rank[high]}` : '，秩不变'}`,
     }),
     comment: sameRank
-      ? `④ 两个根的秩都是 ${rank[high]! - 1}（一样高），随便挑一个当新根：parent[${low}] = ${high}，并完新根秩加 1 变成 ${rank[high]}`
-      : `④ 秩 ${rank[low]!} < 秩 ${rank[high]!}，所以把小的那棵的根 ${low} 挂到 ${high} 下面：parent[${low}] = ${high}，${high} 的秩不变（还是 ${rank[high]}），原来 ${low} 那棵树的结点现在都在 ${high} 底下`,
-    vars: { 被合并的根: low, 新根: high },
+      ? `③④ 两个根的秩都是 ${rank[high]! - 1}（一样高），随便挑一个当新根：parent[${low}] = ${high}，并完新根秩加 1 变成 ${rank[high]}。parent 由 [${parentBefore.join(', ')}] 变成 [${parent.join(', ')}]`
+      : `③ 秩 ${rank[low]!} < 秩 ${rank[high]!}，所以把小的那棵的根 ${low} 挂到 ${high} 下面：parent[${low}] = ${high}，${high} 的秩不变（还是 ${rank[high]}）—— 原来 {${membersX.join(',')}} 这些结点现在都挂到 ${high} 底下了。parent 由 [${parentBefore.join(', ')}] 变成 [${parent.join(', ')}]`,
+    vars: { n, 被合并的根: low, 新根: high, 被合并的根的秩: rank[low]!, 新根秩: rank[high]! },
   }
 
   yield {
@@ -1466,8 +1545,8 @@ function* runUfUnion(data: number[]): AlgoRunner {
       pointers: { 新根: `u${high}` },
       note: `合并后 parent = [${parent.join(', ')}]，${ufGroups(parent)}`,
     }),
-    comment: `合并完成：parent = [${parent.join(', ')}]，分组变成 ${ufGroups(parent)}。按秩合并保证树高不超过 O(log n)，再配上路径压缩，Find / Union 的均摊时间接近 O(1)`,
-    vars: { 新根: high, 新根秩: rank[high]! },
+    comment: `合并完成：parent = [${parent.join(', ')}]，一共 ${n} 个元素、现在 ${ufGroupCount(parent)} 个集合：${ufGroups(parent)}。按秩合并保证树高不超过 O(log n)，再配上路径压缩，Find / Union 的均摊时间接近 O(1)`,
+    vars: { n, 新根: high, 新根秩: rank[high]!, 组数: ufGroupCount(parent) },
   }
 }
 
@@ -1625,20 +1704,20 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     complexity: { time: 'O(α(n))，均摊接近 O(1)', space: 'O(n)' },
     renderer: 'tree',
     codeLines: CODE_UF_FIND,
-    defaultData: () => [0, 1, 2, 3, 4, 5, 6, 7],
-    // 并查集的分组是**摆好的**：{0,1,2} 一条 3 层的链（演示路径压缩）、{3,4}、{5,6,7}，
-    // 一共 8 个结点。换成别的规模就没有这组结构了，所以只给一个合法规模，不误导用户
-    sizes: [UF_N],
-    initComment: () =>
-      '双亲表示法：parent[i] = i 的是根，其余结点用向上的虚线指着自己的双亲。初始分组是 {0,1,2}、{3,4}、{5,6,7}',
+    defaultData: () => UF_DEFAULT.slice(),
+    // 元素个数 = 数据规模 n：5..9 都能摆（初始分组由 ufInit 按 n 生成）
+    sizes: [...UF_SIZES],
+    prepareData,
+    initComment: (data) => {
+      const n = ufSize(data)
+      const { parent } = ufInit(n)
+      return `双亲表示法：parent[i] = i 的是根，其余结点用向上的虚线指着自己的双亲。数据规模 n = ${n}，初始分成 ${ufGroupCount(parent)} 个集合：${ufGroups(parent)}，结点下方小字是秩`
+    },
     initTree: (data) => {
-      const n = data.length > 1 ? data.length : UF_N
-      const init = ufInit()
-      const parent = init.parent.slice(0, n)
-      const rank = init.rank.slice(0, n)
-      for (let i = 0; i < n; i++) if (parent[i]! >= n) parent[i] = i
+      const n = ufSize(data)
+      const { parent, rank } = ufInit(n)
       return ufView(parent, rank, {
-        note: `parent = [${parent.join(', ')}]，向上虚线就是双亲指针，指向自己的结点是根`,
+        note: `parent = [${parent.join(', ')}]，一共 ${n} 个元素、${ufGroupCount(parent)} 个集合；向上虚线就是双亲指针，指向自己的结点是根`,
       })
     },
     createRunner: runUfFind,
@@ -1652,19 +1731,20 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     complexity: { time: 'O(α(n))，均摊接近 O(1)', space: 'O(n)' },
     renderer: 'tree',
     codeLines: CODE_UF_UNION,
-    defaultData: () => [0, 1, 2, 3, 4, 5, 6, 7],
-    // 同 uf-find：8 个结点、固定的三组，规模只有一个合法值
-    sizes: [UF_N],
-    initComment: () =>
-      '双亲表示法 + 秩（结点下方小字）。合并前先各自 Find 到根，再按秩合并：秩小的根挂到秩大的根下面',
+    defaultData: () => UF_DEFAULT.slice(),
+    // 同 uf-find：元素个数 = 数据规模，初始分组按 n 生成
+    sizes: [...UF_SIZES],
+    prepareData,
+    initComment: (data) => {
+      const n = ufSize(data)
+      const { parent } = ufInit(n)
+      return `双亲表示法 + 秩（结点下方小字）。数据规模 n = ${n}，初始分成 ${ufGroupCount(parent)} 个集合：${ufGroups(parent)}。合并前先各自 Find 到根，再按秩合并：秩小的根挂到秩大的根下面`
+    },
     initTree: (data) => {
-      const n = data.length > 1 ? data.length : UF_N
-      const init = ufInit()
-      const parent = init.parent.slice(0, n)
-      const rank = init.rank.slice(0, n)
-      for (let i = 0; i < n; i++) if (parent[i]! >= n) parent[i] = i
+      const n = ufSize(data)
+      const { parent, rank } = ufInit(n)
       return ufView(parent, rank, {
-        note: `parent = [${parent.join(', ')}]，结点下方小字是秩`,
+        note: `parent = [${parent.join(', ')}]，一共 ${n} 个元素、${ufGroupCount(parent)} 个集合，结点下方小字是秩`,
       })
     },
     createRunner: runUfUnion,
