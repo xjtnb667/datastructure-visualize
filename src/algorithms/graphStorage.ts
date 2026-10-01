@@ -205,9 +205,13 @@ const mid = (r: number, c: number): number => r * MCOLS + c
 const mdata = (i: number, j: number): number => mid(i + 1, j + 1)
 
 /**
- * 邻接矩阵本体：对角线 0，无边 -1（画成 ∞），有边就是权值。
+ * **建完之后的**邻接矩阵（也就是这道题的最终答案）：对角线 0，无边 -1（画成 ∞），有边就是权值。
  * 用 -1 而不是 Infinity 是因为 engine 要求每帧的 array 全是有限数 ——
  * 这里虽然没把矩阵塞进 array，但保持"表里不出现 Inf"的习惯更省心。
+ *
+ * 注意：这是**终态**，只准"已经写进矩阵的格子"去查它取权值。
+ * 谁把整张 M 直接铺到画面上，首帧就会把 20 个权值全画出来 —— 那是剧透，
+ * 而且和底部「已填格」计数（还只有 0 / 2 / 4…）当场对不上。
  */
 const M: number[][] = (() => {
   const a = Array.from({ length: N }, () => Array.from({ length: N }, () => -1))
@@ -222,26 +226,39 @@ const M: number[][] = (() => {
 const mtext = (v: number): string => (v === -1 ? '∞' : String(v))
 
 const MATRIX_NOTE =
-  '第 0 行 / 第 0 列是顶点表头 vex，其余格子才是 arc[i][j]：∞ = 不相邻，对角线写 0；紫色 = 正在写的格子，绿色 = 已经存好的边'
+  '第 0 行 / 第 0 列是顶点表头 vex，其余格子才是 arc[i][j]：对角线写 0，其余先全部写 ∞（灰 = 还没读到这条边）；紫色 = 正在写的格子，绿色 = 已经存好的边'
 
-/** 邻接矩阵板：hot = 正在写的格子，done = 已经填好的格子，pointers 标当前行 / 列 */
+/**
+ * 邻接矩阵板。
+ *
+ * **画的是"当前已经建成的样子"，不是最终结果**：只有落在 filled 里的格子才显示权值，
+ * 别的格子一律还是 ∞。这一点是这个算法的立身之本 ——
+ * 读一条边只填两个对称格，没读到的边就不该有权值（否则首帧 36 个格子里
+ * 20 个权值全在，既和「已填格」计数矛盾，也把答案提前剧透了）。
+ *
+ * @param filled 已经写进矩阵的格子序号（= 已读过的边对应的那些对称格）
+ * @param hot 正在写的两个格子序号，画紫色；此刻它们的值还是 ∞
+ * @param pointers 当前行 / 列 / 格子的黄色小标签
+ */
 function matrixBoard(opts: {
   hot?: number[]
-  done?: number[]
+  filled?: number[]
   pointers?: Record<string, number>
   note?: string
 } = {}): BoardView {
   const hot = new Set(opts.hot ?? [])
-  const done = new Set(opts.done ?? [])
+  const filled = new Set(opts.filled ?? [])
   const items: CellItem[] = [{ text: '顶点', sub: 'vex', tone: 'base' }]
   for (let j = 0; j < N; j++) items.push({ text: ALL_V[j]!, sub: `列${j}`, tone: 'base' })
   for (let i = 0; i < N; i++) {
     items.push({ text: ALL_V[i]!, sub: `行${i}`, tone: 'base' })
     for (let j = 0; j < N; j++) {
       const idx = mdata(i, j)
-      const v = M[i]![j]!
-      const tone: CellTone = hot.has(idx) ? 'hot' : done.has(idx) ? 'done' : v === -1 ? 'dim' : 'base'
-      items.push({ text: mtext(v), sub: `${i},${j}`, tone })
+      // 初始化时对角线就写 0，其余先写 ∞；只有真读过的边才把权值写上去
+      const written = filled.has(idx)
+      const text = written ? mtext(M[i]![j]!) : i === j ? '0' : '∞'
+      const tone: CellTone = hot.has(idx) ? 'hot' : written ? 'done' : i === j ? 'base' : 'dim'
+      items.push({ text, sub: `${i},${j}`, tone })
     }
   }
   return {
@@ -269,7 +286,7 @@ const CODE_MATRIX = [
 
 function* runAdjMatrix(): AlgoRunner {
   const written = new Set<number>()
-  /** 已经填好的矩阵格子序号 */
+  /** 已经填好的矩阵格子序号（= 画面里有权值的那些格子；底部「已填格」就是它的长度） */
   const filled: number[] = []
   const badges = (): Record<string, string> =>
     Object.fromEntries(ALL_V.map((id, k) => [id, `第${k}行`]))
@@ -279,13 +296,14 @@ function* runAdjMatrix(): AlgoRunner {
     action: 'init',
     array: V_ARRAY,
     graph: view({
-      edges: unEdges(),
+      // 一条边都还没读：图上的边先画成灰色虚线，权值也压暗 —— 表示"还没进矩阵"
+      edges: unEdges(() => 'dim'),
       badges: badges(),
       note: `无向带权图：${N} 个顶点、${UNDIRECTED.length} 条带权的边；下面这张矩阵就是它在内存里的样子`,
     }),
     boards: [matrixBoard()],
-    comment: `要存的是这张无向带权图：${N} 个顶点 V1..V6、${UNDIRECTED.length} 条边，每条边都有权值（顶点下方的小字 v0..v5 就是它在表格里的下标）。邻接矩阵把图存成一个 ${N}×${N} 的二维数组：第 0 行和第 0 列是**顶点表**，剩下的 arc[i][j] 写"顶点 i 和 j 之间那条边的权值"，没有边就写 ∞，对角线写 0。`,
-    vars: { n: N, 边数: UNDIRECTED.length },
+    comment: `要存的是这张无向带权图：${N} 个顶点 V1..V6、${UNDIRECTED.length} 条边，每条边都有权值（顶点下方的小字 v0..v5 就是它在表格里的下标）。邻接矩阵把图存成一个 ${N}×${N} 的二维数组：第 0 行和第 0 列是**顶点表**，剩下的 arc[i][j] 写"顶点 i 和 j 之间那条边的权值"，没有边就写 ∞，对角线写 0。矩阵现在的状态是：**对角线 6 个 0，其余 30 格全是 ∞** —— 一条边都还没读进来，所以图上的边也是灰的。`,
+    vars: { n: N, 边数: UNDIRECTED.length, 已填格: 0 },
   }
 
   for (let k = 0; k < UNDIRECTED.length; k++) {
@@ -302,15 +320,15 @@ function* runAdjMatrix(): AlgoRunner {
       array: V_ARRAY,
       indices: [a, b],
       graph: view({
-        edges: unEdges((x) => (x === k ? 'hot' : written.has(x) ? 'done' : undefined)),
+        edges: unEdges((x) => (x === k ? 'hot' : written.has(x) ? 'done' : 'dim')),
         hot: [ALL_V[a]!, ALL_V[b]!],
         done: finishedV(written),
         badges: badges(),
         note: `正在读第 ${k + 1} 条边：${ALL_V[a]} — ${ALL_V[b]}，权值 ${e.w}`,
       }),
-      boards: [matrixBoard({ hot: [c1, c2], done: filled, pointers })],
-      comment: `读第 ${k + 1}/${UNDIRECTED.length} 条边：${ALL_V[a]} — ${ALL_V[b]}，权值 ${e.w}。它在矩阵里对应 arc[${a}][${b}] 和 arc[${b}][${a}] **两个**格子 —— 无向图的边两个方向都通，所以两个格子要一起点亮（紫色）。矩阵沿主对角线对称，说的就是这件事。`,
-      vars: { i: a, j: b, w: e.w },
+      boards: [matrixBoard({ hot: [c1, c2], filled, pointers })],
+      comment: `读第 ${k + 1}/${UNDIRECTED.length} 条边：${ALL_V[a]} — ${ALL_V[b]}，权值 ${e.w}。它在矩阵里对应 arc[${a}][${b}] 和 arc[${b}][${a}] **两个**格子 —— 无向图的边两个方向都通，所以两个格子要一起点亮（紫色）。这两格现在还是 ∞，权值要下一步才写进去。`,
+      vars: { i: a, j: b, w: e.w, 已填格: filled.length },
     }
 
     written.add(k)
@@ -322,14 +340,15 @@ function* runAdjMatrix(): AlgoRunner {
       array: V_ARRAY,
       indices: [a, b],
       graph: view({
-        edges: unEdges((x) => (written.has(x) ? 'done' : undefined)),
+        edges: unEdges((x) => (written.has(x) ? 'done' : 'dim')),
         hot: [ALL_V[a]!, ALL_V[b]!],
         done: finishedV(written),
         badges: badges(),
         note: `${ALL_V[a]} — ${ALL_V[b]} 已经进矩阵：arc[${a}][${b}] = arc[${b}][${a}] = ${e.w}`,
       }),
-      boards: [matrixBoard({ hot: [c1, c2], done: filled, pointers })],
-      comment: `把权值填进去：arc[${a}][${b}] = arc[${b}][${a}] = ${e.w}，两个对称的格子写同一个值。到这里一共填好 ${filled.length} 个格子；没有边的位置一直是 ∞，对角线是 0。`,
+      // 这一帧两格已经写成权值，所以是绿色（done），不再点紫
+      boards: [matrixBoard({ filled, pointers })],
+      comment: `把权值填进去：arc[${a}][${b}] = arc[${b}][${a}] = ${e.w}，两个对称的格子写同一个值 —— 它们一起从 ∞ 变成 ${e.w}、一起变绿。到这里一共填好 ${filled.length} 个格子（就是画面里有权值的格子数）；没读到的边一直是 ∞，对角线是 0。`,
       vars: { i: a, j: b, w: e.w, 已填格: filled.length },
     }
   }
@@ -354,12 +373,12 @@ function* runAdjMatrix(): AlgoRunner {
     boards: [
       matrixBoard({
         hot: [qc],
-        done: filled,
+        filled,
         pointers: { 行: mid(qi + 1, 0), 列: mid(0, qj + 1), 查询格: qc },
       }),
     ],
     comment: `查边：${ALL_V[qi]} 和 ${ALL_V[qj]} 之间有没有边、权值多少？不用翻别的格子，直接读 arc[${qi}][${qj}] = ${M[qi]![qj]!} ≠ ∞ —— 一步就有答案，查边是 O(1)。这是邻接矩阵最大的好处。`,
-    vars: { i: qi, j: qj, w: M[qi]![qj]! },
+    vars: { i: qi, j: qj, w: M[qi]![qj]!, 已填格: filled.length },
   }
 
   yield {
@@ -372,7 +391,7 @@ function* runAdjMatrix(): AlgoRunner {
       badges: badges(),
       note: `${UNDIRECTED.length} 条边全都进了矩阵：${N * N} 个格子里有 ${filled.length} 个写着权值`,
     }),
-    boards: [matrixBoard({ done: filled })],
+    boards: [matrixBoard({ filled })],
     comment: `存完了：${UNDIRECTED.length} 条边占了 ${filled.length} 个格子（每条边两个对称格），对角线的 ${N} 个格子是 0，剩下 ${N * N - filled.length - N} 个格子是 ∞。空间永远是 n² = ${N * N}，和图里有多少条边无关 —— 稠密图划算，边少的图很浪费，所以还要学邻接表。`,
     vars: { n: N, 边数: UNDIRECTED.length, 权值格: filled.length },
   }
@@ -1339,12 +1358,13 @@ export const graphStorageSpecs: AlgorithmSpec[] = [
     prepareData: () => [...V_ARRAY],
     sizes: [N],
     initComment: () =>
-      `无向带权图：6 个顶点 V1~V6、10 条带权的边。邻接矩阵把它存成 6×6 的二维数组 —— 第一行第一列是顶点表，边写权值、无边写 ∞、对角线写 0；读一条边要把对称的两个格子一起写上`,
+      `无向带权图：6 个顶点 V1~V6、10 条带权的边。邻接矩阵把它存成 6×6 的二维数组 —— 第一行第一列是顶点表，边写权值、无边写 ∞、对角线写 0；读一条边要把对称的两个格子一起写上。眼下一条边都还没读，所以矩阵里**只有对角线是 0，其余 30 格全是 ∞**`,
     initGraph: () =>
       view({
-        edges: unEdges(),
+        // 首帧用的就是这张图：边先画成灰色虚线（"还没读进矩阵"），和矩阵里的 ∞ 灰色是一个意思
+        edges: unEdges(() => 'dim'),
         badges: HEAD_BADGES,
-        note: '顶点旁边的小标签是它在矩阵里的行号（它同时也是那一列）',
+        note: '顶点旁边的小标签是它在矩阵里的行号（它同时也是那一列）；灰色的边 = 还没读进矩阵',
       }),
     initScene: () => ({ boards: [matrixBoard()] }),
     createRunner: runAdjMatrix,
