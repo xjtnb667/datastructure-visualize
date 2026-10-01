@@ -70,6 +70,46 @@ function walkTree(view: TreeSnapshot): {
   return { inorder, bfs }
 }
 
+/**
+ * 多路树（B 树 / B+ 树）的快照没法用 left / right 走：一个结点里装着 keys 数组，
+ * 孩子走 children（n 个关键字把范围切成 n+1 段，所以正好 n+1 个孩子）。这里按 children 递归，返回：
+ *   leaves  —— 叶子结点（按从左到右的顺序）
+ *   depths  —— 结点 id -> 层号（根是第 1 层），用来验证"所有叶子都在同一层"
+ *   inorder —— 中序关键字序列（B 树的关键字全树只存一份，这个序列必须严格升序）
+ */
+function walkMultiway(view: TreeSnapshot): {
+  leaves: TreeSnapshot['nodes']
+  depths: Map<string, number>
+  inorder: number[]
+} {
+  const byId = new Map(view.nodes.map((n) => [n.id, n]))
+  const leaves: TreeSnapshot['nodes'] = []
+  const depths = new Map<string, number>()
+  const inorder: number[] = []
+
+  const walk = (id: string | null | undefined, depth: number): void => {
+    if (!id) return
+    const node = byId.get(id)
+    if (!node || depths.has(node.id)) return // 自环 / 重复挂同一个孩子时立刻停，别转死
+    depths.set(node.id, depth)
+    const kids = node.children ?? []
+    const keys = (node.keys ?? []).map(Number)
+    if (!kids.length) {
+      leaves.push(node)
+      inorder.push(...keys)
+      return
+    }
+    for (let i = 0; i < keys.length; i++) {
+      walk(kids[i], depth + 1)
+      inorder.push(keys[i]!)
+    }
+    walk(kids[keys.length], depth + 1)
+  }
+
+  walk(view.root, 1)
+  return { leaves, depths, inorder }
+}
+
 /** 大根堆判定（下标 0 开始）：每个结点都不小于它的两个孩子 */
 function isMaxHeap(a: number[]): boolean {
   for (let i = 0; i < a.length; i++) {
@@ -152,24 +192,34 @@ describe('所有已注册算法（步骤序列规范）', () => {
 describe('排序类算法', () => {
   const sortSpecs = getAlgorithmsByCategory('sort')
   /*
-   * 排序大类下现在住着两种东西，它们的"有序"不是一回事，断言必须分开：
-   *   ① 数组类排序（renderer === 'array'）：整条序列就是一个数组，终态必然**整体升序**；
+   * 排序大类下住着三拨东西，它们的"有序"不是一回事，断言必须分开：
+   *   ① 数组类排序（renderer === 'array'）：整条序列就是一个数组，终态必然**整体升序**
+   *      （折半插入 / 希尔 / 快速 / 归并 / 计数 / 堆排序 / 基数排序都在这一拨）；
    *   ② 堆（group === '堆'，renderer === 'scene'）：数组是堆的层序存储，只保证"父 ≥ 子"这个**偏序**，
-   *      大根堆 [10, 8, 9, 7, ...] 本身并不是升序的 —— 之前就是拿"升序"去卡堆才红的。
+   *      大根堆 [10, 8, 9, 7, ...] 本身并不是升序的 —— 之前就是拿"升序"去卡堆才红的；
+   *   ③ 外部排序类（group === '外部排序'，renderer 是 scene / tree）：演的是"内存在外存之间倒腾记录"，
+   *      画面主体是归并段 / 败者树 / 归并树，不能拿"整条序列升序"去卡它（置换-选择排序的终态就是几段拼起来的）。
    */
   const arraySorts = sortSpecs.filter((s) => s.renderer === 'array')
   const heapSpecs = sortSpecs.filter((s) => s.group === '堆')
+  const externalSorts = sortSpecs.filter((s) => s.group === '外部排序')
 
-  it('数组类排序和堆两拨都非空，且排序大类里没有算法落在筛选条件之外', () => {
-    // 这条守的是"筛选条件写错导致下面两组变成空跑"：两拨都得有货，且合起来就是整个大类
+  it('数组类排序、堆、外部排序三拨都非空，且排序大类里没有算法落在筛选条件之外', () => {
+    // 这条守的是"筛选条件写错导致下面几组变成空跑"：三拨都得有货，且合起来正好是整个大类
+    // （既不能漏算法，也不能有算法同时落进两拨 —— 那样条数就对不上了）
     expect(arraySorts.length).toBeGreaterThan(0)
     expect(heapSpecs.length).toBeGreaterThan(0)
+    expect(externalSorts.length).toBeGreaterThan(0)
     for (const spec of sortSpecs) {
       expect(
-        arraySorts.includes(spec) || heapSpecs.includes(spec),
-        `${spec.name} 既不是数组类排序，也不在「堆」子类里 —— 下面两组用例都会漏掉它`,
+        arraySorts.includes(spec) || heapSpecs.includes(spec) || externalSorts.includes(spec),
+        `${spec.name} 既不是数组类排序，也不在「堆」/「外部排序」子类里 —— 下面几组用例都会漏掉它`,
       ).toBe(true)
     }
+    expect(
+      arraySorts.length + heapSpecs.length + externalSorts.length,
+      '三拨加起来和排序大类的算法数对不上：要么漏了算法，要么有算法被两拨同时收进去了',
+    ).toBe(sortSpecs.length)
   })
 
   for (const spec of arraySorts) {
@@ -195,21 +245,41 @@ describe('排序类算法', () => {
       expect(final).toHaveLength(input.length)
     })
   }
+
+  for (const spec of externalSorts) {
+    it(`${spec.name}：归并来归并去，记录一个不多一个不少（外部排序只搬数据，不造数据）`, () => {
+      const input = prepared(spec)
+      const final = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!.array
+
+      /*
+       * 外部排序的产物是"若干有序归并段"（置换-选择排序的终态就是几段拼起来的，本身并不整体升序），
+       * 但不管怎么分趟、怎么选段、怎么建归并树，记录的总数必须守恒：
+       * 少一条 = 某一趟归并漏读了，多一条 = 段被重复并进去了。
+       */
+      expect(ascending(final), `终态 [${final.join(', ')}] 和输入的元素对不上`).toEqual(
+        ascending(input),
+      )
+      expect(final).toHaveLength(input.length)
+    })
+  }
 })
 
 describe('查找类算法', () => {
   const searchSpecs = getAlgorithmsByCategory('search')
   /*
-   * 查找大类下也是两种东西，验收方式完全不同，不能再混用一套断言：
+   * 查找大类下住着三拨东西，验收方式完全不同，不能再混用一套断言：
    *   ① 数组上的查找（renderer === 'array' 且有 defaultTarget）：命中的是**一个下标**，
    *      所以能用 indices / sortedIndices / "命中"解说词来判；
-   *   ② 树上的查找（BST / AVL，renderer === 'tree'）：命中的是**一个结点**，
-   *      它们没有 defaultTarget（bst-insert / bst-delete / AVL 四条旋转压根没有目标值），
-   *      也没有"命中下标"这回事 —— 之前就是硬套数组断言才红的。
+   *   ② 树上的查找（BST / AVL / 红黑树 / B 树 / B+ 树，renderer === 'tree'）：命中的是**一个结点**，
+   *      它们没有数组下标可用（bst-insert / bst-delete / AVL 四条旋转压根没有目标值），
+   *      要按树自己的性质验收；
+   *   ③ 场景上的查找（renderer === 'scene'，哈希表）：画面主体是"桶 + 链"的板子，
+   *      连数组下标都不画，index / indices 那一套同样套不上。
    */
   const targetSearches = searchSpecs.filter((s) => !!s.defaultTarget)
   const arraySearches = targetSearches.filter((s) => s.renderer === 'array')
   const treeSearches = searchSpecs.filter((s) => s.renderer === 'tree')
+  const sceneSearches = searchSpecs.filter((s) => s.renderer === 'scene')
 
   it('至少实现了顺序查找与折半查找', () => {
     const ids = searchSpecs.map((s) => s.id)
@@ -217,16 +287,21 @@ describe('查找类算法', () => {
     expect(ids).toContain('binary-search')
   })
 
-  it('数组查找和树查找两拨都非空，且查找大类里没有算法落在筛选条件之外', () => {
+  it('数组查找、树查找、场景查找三拨都非空，且查找大类里没有算法落在筛选条件之外', () => {
     // 同上：防"筛选条件写错 -> 下面几组空跑"
     expect(arraySearches.length).toBeGreaterThan(0)
     expect(treeSearches.length).toBeGreaterThan(0)
+    expect(sceneSearches.length).toBeGreaterThan(0)
     for (const spec of searchSpecs) {
       expect(
-        arraySearches.includes(spec) || treeSearches.includes(spec),
-        `${spec.name} 既不是数组上的查找，也不是树上的查找 —— 下面几组用例都会漏掉它`,
+        arraySearches.includes(spec) || treeSearches.includes(spec) || sceneSearches.includes(spec),
+        `${spec.name} 既不是数组上的查找，也不是树上的 / 场景上的查找 —— 下面几组用例都会漏掉它`,
       ).toBe(true)
     }
+    expect(
+      arraySearches.length + treeSearches.length + sceneSearches.length,
+      '三拨加起来和查找大类的算法数对不上：要么漏了算法，要么有算法被两拨同时收进去了',
+    ).toBe(searchSpecs.length)
   })
 
   for (const spec of arraySearches) {
@@ -255,8 +330,64 @@ describe('查找类算法', () => {
     })
   }
 
-  // ---- 树上的查找：用"树"自己的性质验收，不再硬套数组下标 ----
-  for (const spec of treeSearches) {
+  // ---- 场景上的查找（哈希表）：画面是"桶 + 链"的板子，只验"算桶 -> 顺链比 -> 命中"这条链 ----
+  for (const spec of sceneSearches) {
+    it(`${spec.name}：目标值取自数据本身时，终态必须落在"命中"那一支`, () => {
+      const input = prepared(spec)
+      const target = input[Math.floor(input.length / 2)]! // 取自数据本身 -> 必定命中
+      expect(input, '自检：用来查找的目标值一定在数据里').toContain(target)
+
+      const last = buildSteps(spec, input, ctxOf(spec, input, target)).at(-1)!
+      expect(last.action).toBe('done')
+      expect(last.comment, `${spec.name} 的终态没有说明命中`).toContain('命中')
+      // 场景查找没有"命中下标"这一说：链表法里命中项可能挂在桶的链上，哪一格都不是数组下标
+      expect(last.boards?.length ?? 0, '场景查找的终态连一块板子都没有').toBeGreaterThan(0)
+    })
+  }
+
+  /*
+   * ---- 树上的查找：先按**结构**分成两拨，再各用各的性质验收 ----
+   *   二叉：结点里有 left / right（BST / AVL / 红黑树）——"中序严格升序"是它们的判据；
+   *   多路：结点里是 keys 数组、孩子走 children（B 树 / B+ 树）——它们**不是二叉树**，
+   *        一个结点装多个关键字、B+ 树的内部结点里还全是叶子关键字的副本，
+   *        硬套"中序严格升序 + 无重复键"必然红，所以要另立判据。
+   * 这里按末帧的真实结构分类（不写死 id），漏掉 / 新增算法都会在下面的守卫里露出来。
+   */
+  const lastTreeViewOf = (spec: AlgorithmSpec): TreeSnapshot =>
+    buildSteps(spec, prepared(spec), ctxOf(spec, prepared(spec))).at(-1)!.tree!
+  const treeShapes = new Map(
+    treeSearches.map((spec) => {
+      const view = lastTreeViewOf(spec)
+      return [
+        spec.id,
+        {
+          // 二叉树的结点一定有 left / right（哪怕是 null）
+          binary: view.nodes.some((n) => n.left !== undefined || n.right !== undefined),
+          // B+ 树的叶子上挂着 next 指针，画成叶子之间那条虚线链；B 树没有
+          leafChain: (view.links ?? []).length > 0,
+        },
+      ] as const
+    }),
+  )
+  const binaryTreeSearches = treeSearches.filter((s) => treeShapes.get(s.id)!.binary)
+  const multiwayTreeSearches = treeSearches.filter((s) => !treeShapes.get(s.id)!.binary)
+  const leafChainSearches = multiwayTreeSearches.filter((s) => treeShapes.get(s.id)!.leafChain)
+  const plainMultiwaySearches = multiwayTreeSearches.filter((s) => !treeShapes.get(s.id)!.leafChain)
+
+  it('二叉排序树 / 多路平衡查找树两拨都非空，且树上的查找没有落在两拨之外的', () => {
+    // 防"结构判断写错 -> 下面的二叉组或多路组变成空跑"
+    expect(binaryTreeSearches.length).toBeGreaterThan(0)
+    expect(multiwayTreeSearches.length).toBeGreaterThan(0)
+    expect(
+      binaryTreeSearches.length + multiwayTreeSearches.length,
+      '两拨加起来和树上的查找对不上',
+    ).toBe(treeSearches.length)
+    // 多路树内部还要再分：有叶子链表的是 B+ 树，没有的是 B 树，两边都得有货
+    expect(leafChainSearches.length).toBeGreaterThan(0)
+    expect(plainMultiwaySearches.length).toBeGreaterThan(0)
+  })
+
+  for (const spec of binaryTreeSearches) {
     it(`${spec.name}：终态是一棵合法的二叉排序树（中序严格升序，且逻辑序列与树结构一致）`, () => {
       const input = prepared(spec)
       const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
@@ -267,8 +398,132 @@ describe('查找类算法', () => {
       // BST 的判据：中序序列必须严格升序；旋转 / 删除写错时这里一定会露出来
       expect(inorder).toEqual(ascending(inorder))
       expect(new Set(inorder).size, '树上出现了重复的关键字').toBe(inorder.length)
-      // array 字段是"逻辑顺序"，树类算法里它就该是中序序列
-      expect(last.array).toEqual(inorder)
+
+      /*
+       * array 字段是数据栏的"逻辑顺序"，它和树上的键必须对得上。
+       *   BST / AVL：数据栏就是中序序列，逐位都要相等；
+       *   红黑树：数据栏故意按**插入顺序**排（插入顺序决定它最后长什么样，
+       *           [10,20,30,40,35,50,45] 本身就不升序），所以只要求键的集合一致。
+       */
+      expect([...last.array].sort((x, y) => x - y), '数据栏的键和树上的键对不上').toEqual(inorder)
+      const coloredPanel = last.tree!.nodes.some((n) => n.color !== undefined) // 结点带颜色 = 红黑树
+      if (!coloredPanel) {
+        expect(last.array, '数据栏本来就该是中序序列').toEqual(inorder)
+      }
+    })
+  }
+
+  for (const spec of multiwayTreeSearches) {
+    it(`${spec.name}：终态是一棵合法的多路平衡查找树（结点内关键字有序、孩子数自洽、所有叶子同层）`, () => {
+      const input = prepared(spec)
+      const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
+      expect(last.action).toBe('done')
+      const view = last.tree!
+      const { leaves, depths, inorder } = walkMultiway(view)
+
+      // ① 结点内关键字必须严格升序：一个结点里乱序 / 塞重复关键字，查找时的"顺序比较"就不成立了
+      for (const n of view.nodes) {
+        const keys = (n.keys ?? []).map(Number)
+        expect(keys.length, `结点 ${n.id} 里一个关键字都没有`).toBeGreaterThan(0)
+        expect(keys, `结点 ${n.id} 的关键字 [${keys.join(', ')}] 没按升序排`).toEqual(ascending(keys))
+        expect(
+          new Set(keys).size,
+          `结点 ${n.id} 里出现了重复的关键字 [${keys.join(', ')}]`,
+        ).toBe(keys.length)
+
+        // n 个关键字把关键字范围切成 n+1 段 -> 内部结点必须正好 n+1 个孩子
+        const kids = n.children ?? []
+        if (kids.length) {
+          expect(
+            kids.length,
+            `结点 ${n.id} 有 ${keys.length} 个关键字，却有 ${kids.length} 个孩子`,
+          ).toBe(keys.length + 1)
+        }
+      }
+
+      // ② 所有叶子都在同一层 —— B 树 / B+ 树说的"平衡"就是这一条（每条从根到叶的路一样长）
+      expect(leaves.length, '一个叶子都没有').toBeGreaterThan(0)
+      const levels = [...new Set(leaves.map((n) => depths.get(n.id)))]
+      expect(levels, `叶子不在同一层（分别落在第 ${levels.join(' / ')} 层）`).toHaveLength(1)
+      // 每个结点都得从根走得到，否则就是 children 指针断了一棵子树（画面上会凭空少一块）
+      expect(depths.size, '有结点从根走不到（children 指针断了）').toBe(view.nodes.length)
+
+      if (plainMultiwaySearches.includes(spec)) {
+        // ③ B 树的关键字全树只存一份：中序序列就是全部关键字的升序序列，条数也该正好对上
+        const all = view.nodes.flatMap((n) => (n.keys ?? []).map(Number))
+        const distinct = [...new Set(input)].sort((a, b) => a - b)
+        expect(inorder, 'B 树的中序序列不是升序的').toEqual(ascending(inorder))
+        expect(inorder, 'B 树上的关键字和数据对不上（多了 / 少了 / 顺序不对）').toEqual(distinct)
+        expect(all.length, 'B 树里同一个关键字存了不止一份').toBe(distinct.length)
+        // array 字段是"逻辑顺序"，B 树里它就是全部关键字的升序序列
+        expect(last.array).toEqual(distinct)
+      }
+    })
+  }
+
+  for (const spec of leafChainSearches) {
+    it(`${spec.name}：关键字全在叶子层、叶子从左到右整体有序，且叶子链表真的把它们串起来了`, () => {
+      const input = prepared(spec)
+      const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
+      const view = last.tree!
+      const { leaves } = walkMultiway(view)
+      const distinct = [...new Set(input)].sort((a, b) => a - b)
+
+      // ① 关键字必须全部落在叶子层：叶子上的关键字去重后就是数据全集（缺一个 = 数据丢在索引里了）
+      const leafKeys = leaves.flatMap((n) => (n.keys ?? []).map(Number))
+      expect(
+        [...new Set(leafKeys)].sort((a, b) => a - b),
+        '有关键字不在叶子层（B+ 树的内部结点只是索引副本，不能当成数据存放的地方）',
+      ).toEqual(distinct)
+      expect(leafKeys.length, '叶子层出现了重复的关键字（每个关键字只该有一份真身）').toBe(
+        distinct.length,
+      )
+
+      // ② 叶子从左到右整体有序：把叶子上的关键字首尾接起来必须是严格升序
+      expect(leafKeys, '叶子层从左到右的关键字没有整体升序').toEqual(ascending(leafKeys))
+      expect(new Set(leafKeys).size).toBe(leafKeys.length)
+
+      // ③ 叶子之间的 next 指针必须一条链串到底、顺序和叶子的左右顺序一致
+      //    （链断了 / 指回头 / 指到索引结点上，范围查找就会走丢）
+      const nextOf = new Map((view.links ?? []).map((l) => [l.from, l.to] as const))
+      const ordered = leaves.map((n) => n.id)
+      const byChain: string[] = [ordered[0]!]
+      while (byChain.length <= ordered.length) {
+        const nxt = nextOf.get(byChain[byChain.length - 1]!)
+        if (nxt === undefined) break
+        byChain.push(nxt)
+      }
+      expect(byChain, '顺着叶子的 next 指针走，出来的不是"叶子从左到右"这一串').toEqual(ordered)
+      expect(view.links?.length ?? 0, '叶子链表的链数不对（除了最后一片叶子，每片都该有一条链）').toBe(
+        ordered.length - 1,
+      )
+
+      // ④ 内部结点里的索引必须是"它右边那棵子树的最小关键字"的副本 —— 这是 B+ 树索引的定义
+      const byId = new Map(view.nodes.map((n) => [n.id, n]))
+      const minOf = (id: string): number => {
+        const n = byId.get(id)!
+        const kids = n.children ?? []
+        // 最左边那棵子树里装着整棵子树的最小关键字
+        return kids.length ? minOf(kids[0]!) : Math.min(...(n.keys ?? []).map(Number))
+      }
+      let checkedIndexes = 0
+      for (const n of view.nodes) {
+        const kids = n.children ?? []
+        if (!kids.length) continue // 叶子层没有索引
+        const keys = (n.keys ?? []).map(Number)
+        for (let i = 0; i < keys.length; i++) {
+          expect(
+            keys[i],
+            `索引结点 ${n.id} 里第 ${i + 1} 个索引 ${keys[i]} 不是"右子树最小关键字"的副本`,
+          ).toBe(minOf(kids[i + 1]!))
+          checkedIndexes++
+        }
+      }
+      expect(checkedIndexes, 'B+ 树里一个索引都没有，这棵树根本没长高 —— 这条断言等于没跑').toBeGreaterThan(0)
+
+      // ⑤ 逻辑序列（array）= 叶子层从左到右的关键字 = 数据全集
+      expect(last.array).toEqual(leafKeys)
+      expect(last.array).toEqual(distinct)
     })
   }
 
@@ -627,12 +882,32 @@ describe('两级选择器的分组数据', () => {
     }
   })
 
-  it('排序和查找现在也有子类了：「堆」是排序的子类，BST / AVL 是查找的子类', () => {
+  it('排序和查找的子类标题按实际情况精确匹配（注册顺序变了这里就红）', () => {
     const groupsOf = (cat: AlgoCategoryId) => getGroupedByCategory(cat).map((g) => g.group)
-    // 冒泡 / 选择 / 插入没有子类，一起排在空标题那一组；堆单独算一组
-    expect(groupsOf('sort')).toEqual(['', '堆'])
-    // 顺序查找 / 折半查找没有子类；二叉排序树与平衡二叉树 AVL 各是一组
-    expect(groupsOf('search')).toEqual(['', '二叉排序树', '平衡二叉树 AVL'])
+    /*
+     * 注意 getGroupedByCategory 只把**相邻**的同 group 合并，所以「分配类排序」会出现两次：
+     * 计数排序（分配类）之后插了堆排序（选择类），基数排序（分配类）又把它接了回去。
+     * 这是注册顺序决定的，不是 bug，这里照实写 —— 顺序一变（新增算法插错位置）这条就会红。
+     */
+    expect(groupsOf('sort')).toEqual([
+      '', // 冒泡 / 选择 / 直接插入
+      '堆', // 建堆 / 堆调整
+      '插入类排序', // 折半插入 / 希尔
+      '交换类排序', // 快速
+      '归并类排序', // 归并
+      '分配类排序', // 计数
+      '选择类排序', // 堆排序
+      '分配类排序', // 基数（注册顺序不连续，所以又开了一组）
+      '外部排序', // 外部排序 / 败者树 / 置换-选择 / 最佳归并树
+    ])
+    expect(groupsOf('search')).toEqual([
+      '', // 顺序查找 / 折半查找
+      '二叉排序树', // 插入 / 查找 / 删除
+      '平衡二叉树 AVL', // LL / RR / LR / RL
+      '平衡二叉树', // 红黑树
+      '多路平衡查找树', // B 树 / B+ 树
+      '索引查找', // 分块查找 / 哈希表
+    ])
 
     // 子类标题不是摆设：这两个大类里带名字的子类都得真的装着算法
     for (const cat of ['sort', 'search'] as const) {

@@ -71,6 +71,8 @@ function cloneTree(tv: TreeView): TreeView {
     nodes: tv.nodes.map((n) => ({
       ...n,
       children: n.children ? [...n.children] : undefined,
+      // keys 是数组，必须复制 —— 不然后面步骤改的是同一份，"上一步"看到的就变了
+      keys: n.keys ? [...n.keys] : undefined,
     })),
     root: tv.root ?? null,
     roots: tv.roots ? [...tv.roots] : undefined,

@@ -114,6 +114,13 @@ export interface ListView {
 export interface TreeNodeSnapshot {
   id: string
   value: number | string
+  /**
+   * **多关键字的结点**（B 树、B+ 树）。填了它就按"一个框里装 n 个关键字"画成宽框，
+   * `value` 被忽略。
+   */
+  keys?: string[]
+  /** 强制指定结点底色（红黑树用：红结点 / 黑结点）。不填走默认配色 */
+  color?: string
   left?: string | null
   right?: string | null
   children?: string[]

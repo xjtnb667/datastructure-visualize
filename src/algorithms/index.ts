@@ -28,6 +28,10 @@ import { treeApplySpecs } from './treeApply'
 import { graphStorageSpecs } from './graphStorage'
 import { graphTraverseSpecs } from './graphTraverse'
 import { graphPathSpecs } from './graphPath'
+import { sortBasicSpecs } from './sortBasic'
+import { sortMoreSpecs } from './sortMore'
+import { searchTreeSpecs } from './searchTree'
+import { searchMoreSpecs } from './searchMore'
 
 /**
  * 算法注册表（SRS EF-09 可扩展性）。
@@ -80,6 +84,12 @@ export const algorithmRegistry: AlgorithmSpec[] = [
   ...graphStorageSpecs,
   ...graphTraverseSpecs,
   ...graphPathSpecs,
+  // 排序 · 插入 / 交换 / 归并 / 分配 / 选择 / 外部
+  ...sortBasicSpecs,
+  ...sortMoreSpecs,
+  // 查找 · 多路平衡查找树 / 红黑树 / 分块 / 哈希
+  ...searchTreeSpecs,
+  ...searchMoreSpecs,
 ]
 
 export function getAlgorithm(id: string): AlgorithmSpec {

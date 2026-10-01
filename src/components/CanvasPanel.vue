@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { scaleBand, scaleLinear } from 'd3-scale'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { PALETTE, css, lerpRgb, type RGB } from '@/core/palette'
 import type { AlgoStep } from '@/core/types'
+import ScenePanel from '@/components/ScenePanel.vue'
 
 const store = useAlgorithmStore()
 const { currentStep, currentStepIndex, steps, maxValue, animDuration, sortedIndices, target } =
   storeToRefs(store)
+
+/**
+ * 柱状图下面的辅助板子。
+ * 计数排序要画"计数数组 + 输出数组"、基数排序要画 10 个桶 —— 这些都是 `boards`，
+ * 而柱状图只认 `array`。所以这里跟 TreePanel / GraphPanel 一样，
+ * 某一帧带了 `boards` 就在下方接一块，柱状图和板子**同时**显示。
+ */
+const bottomBoards = computed(() => (currentStep.value?.boards ?? []).filter((b) => b.position !== 'top'))
 
 const wrapEl = ref<HTMLDivElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -247,12 +256,44 @@ watch([currentStepIndex, steps], () => {
 </script>
 
 <template>
-  <div ref="wrapEl" class="canvas-wrap">
-    <canvas ref="canvasEl"></canvas>
+  <div class="array-wrap">
+    <div ref="wrapEl" class="canvas-wrap">
+      <canvas ref="canvasEl"></canvas>
+    </div>
+    <!-- 计数数组 / 基数排序的桶之类的辅助板子 -->
+    <div v-if="bottomBoards.length" class="boards-slot">
+      <ScenePanel only="bottom" />
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* 柱状图 + 下方辅助板子：上下分栏，板子按内容高度自适应 */
+.array-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.array-wrap > .canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+.boards-slot {
+  flex: 0 0 auto;
+  max-height: 46%;
+  overflow: auto;
+  border-top: 1px solid #232a35;
+}
+
+.boards-slot :deep(.scene) {
+  height: auto;
+  padding-top: 6px;
+  padding-bottom: 2px;
+}
+
 .canvas-wrap {
   position: relative;
   height: 100%;

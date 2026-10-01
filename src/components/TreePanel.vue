@@ -148,7 +148,22 @@ const placed = computed<Placed[]>(() => {
   }))
 })
 
-const px = (p: Placed) => PAD + p.gx * X_STEP
+/**
+ * 结点宽度。普通结点是 46px 的方块；**B 树 / B+ 树的多关键字结点**要按关键字个数加宽，
+ * 不然几个数字挤在一个方框里会叠成一团。
+ */
+function nodeW(n: TreeNodeSnapshot): number {
+  const k = n.keys?.length ?? 0
+  return k > 1 ? 15 * k + 12 : NODE_W
+}
+
+/** 横向间距：有宽结点时要按最宽的那个让开，否则宽结点会互相压过去 */
+const stepX = computed(() => {
+  const widest = Math.max(NODE_W, ...(tv.value?.nodes ?? []).map((n) => nodeW(n)))
+  return Math.max(X_STEP, widest + 20)
+})
+
+const px = (p: Placed) => PAD + p.gx * stepX.value
 const py = (p: Placed) => PAD + p.gy * Y_STEP
 
 const boxW = computed(() => PAD * 2 + (Math.max(0, ...placed.value.map((p) => p.gx)) + 1) * X_STEP)
@@ -317,12 +332,18 @@ const pointerLabels = computed(() => {
           class="tnode"
           :style="{
             transform: `translate(${px(p)}px, ${py(p)}px)`,
-            width: `${NODE_W}px`,
+            width: `${nodeW(p.node)}px`,
             height: `${NODE_H}px`,
-            background: css(colorOf(p.node)),
+            background: p.node.color ?? css(colorOf(p.node)),
           }"
         >
-          <span class="tval">{{ p.node.value }}</span>
+          <!-- 多关键字结点（B 树 / B+ 树）：一个框里横排 n 个关键字 -->
+          <template v-if="p.node.keys && p.node.keys.length">
+            <span class="tkeys">
+              <span v-for="(k, ki) in p.node.keys" :key="ki" class="tkey">{{ k }}</span>
+            </span>
+          </template>
+          <span v-else class="tval">{{ p.node.value }}</span>
           <span v-if="p.node.sub" class="tsub">{{ p.node.sub }}</span>
         </div>
 
@@ -427,6 +448,22 @@ const pointerLabels = computed(() => {
 
 .tval {
   line-height: 1.05;
+}
+
+/* B 树 / B+ 树的多关键字结点：关键字横排，之间画竖分隔线 */
+.tkeys {
+  display: flex;
+  align-items: center;
+  line-height: 1.05;
+}
+
+.tkey {
+  padding: 0 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.tkey:first-child {
+  border-left: none;
 }
 
 .tsub {

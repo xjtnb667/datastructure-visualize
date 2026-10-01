@@ -81,7 +81,7 @@ export function* insertionSort(a: number[]): AlgoRunner {
 
 export const insertionSortSpec: AlgorithmSpec = {
   id: 'insertion-sort',
-  name: '插入排序',
+  name: '直接插入排序',
   category: 'sort',
   summary: '把新元素插入到左边有序区',
   complexity: { time: 'O(n²)', space: 'O(1)', stable: true },
