@@ -1,4 +1,10 @@
-import type { AlgorithmSpec, AlgoRunner, TreeNodeSnapshot } from '@/core/types'
+import type {
+  AlgorithmSpec,
+  AlgoRunner,
+  BoardView,
+  CellTone,
+  TreeNodeSnapshot,
+} from '@/core/types'
 import { completeTreeView, makeCompleteTree, nodeId } from './treeTraverse'
 
 /**
@@ -11,10 +17,17 @@ import { completeTreeView, makeCompleteTree, nodeId } from './treeTraverse'
  * 纪律：**一个 yield = 一步**。递归版的"进左子树 / 访问根 / 进右子树"各占一帧；
  * 非递归版的"压栈 / 弹栈 / 访问 / 转向右子树"各占一帧，不把两个动作塞进同一帧。
  *
- * 非递归版还要让用户**看见栈和队列本身**：
- *   - pointers 给栈（队列）里的每个结点挂一个小标签 S0、S1…，栈顶那个叫「栈顶」（队首叫「队首」）；
- *   - vars 带出 栈深 / 队列长度 / 已访问 这些量；
- *   - 解说词一律写明"栈里存的是什么、什么时候压、什么时候弹"。
+ * 非递归版还要让用户**看见栈和队列本身**，靠三层东西一起说清楚：
+ *   - pointers 给栈（队列）里的每个结点挂一个小标签 S0、S1…，栈顶那个叫「栈顶」（队首叫「队首」）
+ *     —— 它回答的是"栈里这个结点在树上长什么样"；
+ *   - **boards**（见 stackBoard / queueBoard）在树下面另画一块数组板，把栈 / 队列本身整个摊开：
+ *     竖排的栈第 0 格在**最下面**（0 号是栈底），横排的队列第 0 格在**最左边**（0 号是队首），
+ *     每格的 sub 就是它在栈 / 队列里的位置；本步刚压进去的结点画紫色 hot，
+ *     本步重点盯着的那一格（后序"只看栈顶、先不弹"）画红色 mark；
+ *   - vars 带出 栈深 / 队列长度 / 已访问 这些量；解说词一律写明"栈里存的是什么、什么时候压、什么时候弹"。
+ *
+ * 板子下面的 note 一律是「本步做了什么 + 现在的栈深 / 队列长」。空栈空队列把 items 留空、
+ * 在 note 里写"栈空 / 队列空"—— 指针没有落点，绝不能硬给下标。
  */
 
 type NodeMap = Map<string, TreeNodeSnapshot>
@@ -62,6 +75,73 @@ const stackPtrs = (stack: string[], extra: Record<string, string | null> = {}) =
 /** 队列：队首在下标 0（每次都从队首出队） */
 const queuePtrs = (queue: string[], extra: Record<string, string | null> = {}) =>
   framePtrs(queue, 0, '队首', extra)
+
+/* ------------------------------------------------------------------ */
+/* 栈 / 队列板子：把栈（队列）本身整个画出来                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 板子的补充说明。
+ *   hot   —— 本步刚压入 / 刚入队的那个结点，画成紫色，一眼看出"这一步栈里多了谁"；
+ *   focus —— 本步重点盯着的那一格（后序"只看栈顶、先不弹"就是它），画成红色；
+ *   act   —— 本步对栈 / 队列做了什么，写在板子下面那行小字的最前面。
+ */
+interface BoardOpts {
+  hot?: string | null
+  focus?: number
+  act?: string
+}
+
+/** 板子下面那行小字 = 本步的动作 + 当前的规模 */
+const boardNote = (act: string | undefined, state: string): string =>
+  act ? `${act}　${state}` : state
+
+/**
+ * 格子的配色：本步刚入栈 / 入队的紫色（hot）、本步重点看的红色（mark）、其余蓝色（base）。
+ * 注意"刚弹出"的结点已经不在栈里了，所以板子上没有它的格子 ——
+ * 弹栈靠"这一格消失"来表现，再在 note 里写明"刚弹出谁、栈深从几变成几"。
+ */
+const toneOf = (id: string, i: number, opts: BoardOpts): CellTone =>
+  id === opts.hot ? 'hot' : i === opts.focus ? 'mark' : 'base'
+
+/**
+ * 栈板子。column 布局第 0 格在**最下面**，所以 items 从栈底往栈顶排，
+ * 最后一格就是栈顶，指针「栈顶」指向它（下标 = 栈长 - 1）。
+ */
+function stackBoard(stack: string[], byId: NodeMap, opts: BoardOpts = {}): BoardView {
+  const n = stack.length
+  return {
+    title: n ? `栈（栈底在下，共 ${n} 个）` : '栈（空）',
+    layout: 'column',
+    items: stack.map((id, i) => ({
+      text: valOf(byId, id),
+      sub: String(i), // 在栈里的位置：0 是栈底
+      tone: toneOf(id, i, opts),
+    })),
+    // 空栈不给指针：栈顶根本就不存在，硬给下标就越界了
+    pointers: n ? { 栈顶: n - 1 } : {},
+    note: boardNote(opts.act, n ? `栈深 ${n}` : '栈空'),
+  }
+}
+
+/**
+ * 队列板子。row 布局从左往右排，items 从队首往队尾排，
+ * 第 0 格就是队首，指针「队首」指向它。
+ */
+function queueBoard(queue: string[], byId: NodeMap, opts: BoardOpts = {}): BoardView {
+  const n = queue.length
+  return {
+    title: n ? `队列（队首在左，共 ${n} 个）` : '队列（空）',
+    layout: 'row',
+    items: queue.map((id, i) => ({
+      text: valOf(byId, id),
+      sub: String(i), // 在队列里的位置：0 是队首
+      tone: toneOf(id, i, opts),
+    })),
+    pointers: n ? { 队首: 0 } : {},
+    note: boardNote(opts.act, n ? `队列长 ${n}` : '队列空'),
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* ① 中序遍历（递归）                                                   */
@@ -290,6 +370,7 @@ function* runLevel(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { note: '层次遍历：用队列，一层一层往下推进' }),
     comment: `把数据按层序还原成完全二叉树，共 ${nodes.length} 个结点。层次遍历要借一个队列：先进先出，所以同一层的结点必然连着出队`,
     vars: { n: nodes.length, 队列长度: 0 },
+    boards: [queueBoard(queue, byId, { act: '初始化：队列还是空的' })],
   }
   if (!nodes.length) return
 
@@ -307,6 +388,12 @@ function* runLevel(data: number[]): AlgoRunner {
     }),
     comment: `① 先把根结点 ${valOf(byId, root)} 入队 —— 队列里存的就是"已经排上号、还没访问"的结点`,
     vars: { 队列长度: queue.length, 层: 1 },
+    boards: [
+      queueBoard(queue, byId, {
+        hot: root,
+        act: `根结点 ${valOf(byId, root)} 入队，它就是队首`,
+      }),
+    ],
   }
 
   while (queue.length) {
@@ -326,6 +413,11 @@ function* runLevel(data: number[]): AlgoRunner {
       }),
       comment: `② 队首 ${n.value} 出队（它是第 ${dep} 层的结点）—— 队列先进先出，所以上一层没出完，下一层的结点绝不会先出队，画面就是一层一层往下推`,
       vars: { 队列长度: queue.length, 层: dep },
+      boards: [
+        queueBoard(queue, byId, {
+          act: `刚把队首 ${n.value} 出队：队列长 ${queue.length + 1} -> ${queue.length}`,
+        }),
+      ],
     }
 
     done.push(id)
@@ -341,6 +433,9 @@ function* runLevel(data: number[]): AlgoRunner {
       }),
       comment: `③ 访问 ${n.value}（第 ${dep} 层，总共第 ${done.length} 个）—— 已经访问过的结点变成绿色`,
       vars: { 队列长度: queue.length, 层: dep },
+      boards: [
+        queueBoard(queue, byId, { act: `只是访问 ${n.value}，队列没动（它的孩子下一步才入队）` }),
+      ],
     }
 
     if (n.left) {
@@ -358,6 +453,12 @@ function* runLevel(data: number[]): AlgoRunner {
         }),
         comment: `④ 左孩子 ${valOf(byId, n.left)} 入队、排到队尾（它属于第 ${dep + 1} 层，要等第 ${dep} 层的结点全出完才轮到它）`,
         vars: { 队列长度: queue.length, 层: dep },
+        boards: [
+          queueBoard(queue, byId, {
+            hot: n.left,
+            act: `左孩子 ${valOf(byId, n.left)} 入队，排到队尾`,
+          }),
+        ],
       }
     }
 
@@ -376,6 +477,12 @@ function* runLevel(data: number[]): AlgoRunner {
         }),
         comment: `⑤ 右孩子 ${valOf(byId, n.right)} 入队、排在左孩子后面 —— 同一层里永远是"先左后右"`,
         vars: { 队列长度: queue.length, 层: dep },
+        boards: [
+          queueBoard(queue, byId, {
+            hot: n.right,
+            act: `右孩子 ${valOf(byId, n.right)} 入队，排在左孩子后面`,
+          }),
+        ],
       }
     }
   }
@@ -387,6 +494,7 @@ function* runLevel(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { done: [...done], note: '层次遍历结束' }),
     comment: `队列空了，遍历结束。访问顺序是：${orderText(done, byId)}`,
     vars: { 队列长度: 0, 已访问: done.length },
+    boards: [queueBoard(queue, byId, { act: '队首全部出完，队列空了' })],
   }
 }
 
@@ -421,6 +529,7 @@ function* runPreorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { note: '先序非递归：用栈模拟递归，出栈即访问' }),
     comment: `把数据按层序还原成完全二叉树，共 ${nodes.length} 个结点。非递归先序用一个栈：栈里存的是"还没访问的子树根"`,
     vars: { n: nodes.length, 栈深: 0 },
+    boards: [stackBoard(stack, byId, { act: '初始化：栈还是空的' })],
   }
   if (!nodes.length) return
 
@@ -433,6 +542,9 @@ function* runPreorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { hot: [root], pointers: stackPtrs(stack), note: '根结点入栈' }),
     comment: `根结点 ${valOf(byId, root)} 先入栈 —— 栈里放的就是"已经排上、还没访问"的子树根`,
     vars: { 栈深: stack.length, 已访问: 0 },
+    boards: [
+      stackBoard(stack, byId, { hot: root, act: `根结点 ${valOf(byId, root)} 压栈，它成了栈顶` }),
+    ],
   }
 
   while (stack.length) {
@@ -451,6 +563,11 @@ function* runPreorderIter(data: number[]): AlgoRunner {
       }),
       comment: `① 弹出栈顶结点 ${n.value}（压栈时它是子树的根，现在出栈了）—— 先序里"出栈的顺序就是访问顺序"，栈深从 ${stack.length + 1} 变成 ${stack.length}`,
       vars: { 栈深: stack.length, 已访问: done.length },
+      boards: [
+        stackBoard(stack, byId, {
+          act: `刚弹出栈顶 ${n.value}：栈深 ${stack.length + 1} -> ${stack.length}，它已经不在栈里了`,
+        }),
+      ],
     }
 
     done.push(id)
@@ -466,6 +583,7 @@ function* runPreorderIter(data: number[]): AlgoRunner {
       }),
       comment: `② 访问 ${n.value}，这是第 ${done.length} 个被访问的结点（先序：根先被访问）`,
       vars: { 栈深: stack.length, 已访问: done.length },
+      boards: [stackBoard(stack, byId, { act: `只是访问 ${n.value}，栈没动` })],
     }
 
     if (n.right) {
@@ -482,6 +600,12 @@ function* runPreorderIter(data: number[]): AlgoRunner {
         }),
         comment: `③ 先把**右**孩子 ${valOf(byId, n.right)} 压栈 —— 它要排在左子树后面，所以先进栈（后出栈）`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            hot: n.right,
+            act: `右孩子 ${valOf(byId, n.right)} 压栈：先压右孩子，它反而后出栈`,
+          }),
+        ],
       }
     }
 
@@ -499,6 +623,12 @@ function* runPreorderIter(data: number[]): AlgoRunner {
         }),
         comment: `④ 再把**左**孩子 ${valOf(byId, n.left)} 压栈 —— 它后进栈却成了栈顶，下一个弹出的就是它，这样就实现了"先左后右"`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            hot: n.left,
+            act: `左孩子 ${valOf(byId, n.left)} 压栈，成了新栈顶，下一个弹的就是它`,
+          }),
+        ],
       }
     }
   }
@@ -510,6 +640,7 @@ function* runPreorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { done: [...done], note: '先序非递归结束' }),
     comment: `栈空了，遍历结束。访问顺序是：${orderText(done, byId)}`,
     vars: { 栈深: 0, 已访问: done.length },
+    boards: [stackBoard(stack, byId, { act: '栈空了，遍历结束' })],
   }
 }
 
@@ -549,6 +680,7 @@ function* runInorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { note: '中序非递归：沿左链压栈，弹出来访问后再转向右子树' }),
     comment: `把数据按层序还原成完全二叉树，共 ${nodes.length} 个结点。非递归中序的策略是"能往左就往左，走不动了才弹栈"：栈里放的是左子树还没走完的祖先`,
     vars: { n: nodes.length, 栈深: 0 },
+    boards: [stackBoard(stack, byId, { act: '初始化：p 还没动，栈是空的' })],
   }
   if (!nodes.length) return
 
@@ -563,6 +695,7 @@ function* runInorderIter(data: number[]): AlgoRunner {
     }),
     comment: `工作指针 p 指向根结点 ${valOf(byId, p)}，栈还是空的`,
     vars: { 栈深: 0, 已访问: 0 },
+    boards: [stackBoard(stack, byId, { act: `p 指向根结点 ${valOf(byId, p)}，还没压栈` })],
   }
 
   while (p || stack.length) {
@@ -581,6 +714,12 @@ function* runInorderIter(data: number[]): AlgoRunner {
         }),
         comment: `① 结点 ${n.value} 压栈：它的左子树还没走完，所以它自己先不访问，先记在栈里。栈深变成 ${stack.length}`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            hot: p,
+            act: `${n.value} 压栈：它的左子树还没走完，先记在栈里`,
+          }),
+        ],
       }
 
       p = n.left ?? null
@@ -598,6 +737,11 @@ function* runInorderIter(data: number[]): AlgoRunner {
           ? `② p = p->left，继续往左下走，指向 ${valOf(byId, p)} —— 只要还有左孩子就一直压栈`
           : `② p = p->left 得到空，说明已经走到最左端 —— 该弹栈了`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            act: p ? `p 走到 ${valOf(byId, p)}，栈没动` : 'p 变成空，栈没动（该弹栈了）',
+          }),
+        ],
       }
     } else {
       const id = stack[stack.length - 1]!
@@ -614,6 +758,11 @@ function* runInorderIter(data: number[]): AlgoRunner {
         }),
         comment: `③ 左链走到空，弹出栈顶 ${valOf(byId, id)} —— 它就是当前最靠左、还没被访问的结点（栈深 ${stack.length + 1} -> ${stack.length}）`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            act: `刚弹出栈顶 ${valOf(byId, id)}：栈深 ${stack.length + 1} -> ${stack.length}，它已经不在栈里了`,
+          }),
+        ],
       }
 
       done.push(id)
@@ -629,6 +778,7 @@ function* runInorderIter(data: number[]): AlgoRunner {
         }),
         comment: `④ 访问 ${valOf(byId, id)}：此时它的左子树已经全部访问完，才轮到它自己（左 -> 根）`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [stackBoard(stack, byId, { act: `只是访问 ${valOf(byId, id)}，栈没动` })],
       }
 
       p = byId.get(id)!.right ?? null
@@ -646,6 +796,11 @@ function* runInorderIter(data: number[]): AlgoRunner {
           ? `⑤ p = p->right，转向 ${valOf(byId, id)} 的右子树（根是 ${valOf(byId, p)}）：右子树要重新"能往左就往左"地压栈`
           : `⑤ ${valOf(byId, id)} 没有右子树，p 保持为空 —— 下一个循环继续弹栈，回到它的祖先`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            act: p ? `p 转向右子树 ${valOf(byId, p)}，栈没动` : '没有右子树，栈没动',
+          }),
+        ],
       }
     }
   }
@@ -657,6 +812,7 @@ function* runInorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { done: [...done], note: '中序非递归结束' }),
     comment: `栈空了、p 也空了，遍历结束。访问顺序是：${orderText(done, byId)}`,
     vars: { 栈深: 0, 已访问: done.length },
+    boards: [stackBoard(stack, byId, { act: '栈空了、p 也空了，遍历结束' })],
   }
 }
 
@@ -702,6 +858,11 @@ function* runPostorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { note: '后序非递归：栈 + last 标记，右子树访问过才敢访问根' }),
     comment: `把数据按层序还原成完全二叉树，共 ${nodes.length} 个结点。后序非递归比中序多一个难题：栈顶结点的左右子树都访问完才能访问它，可是"右子树到底访问过没有"从栈里看不出来，所以要额外用 last 记住上一个被访问的结点`,
     vars: { n: nodes.length, 栈深: 0 },
+    boards: [
+      stackBoard(stack, byId, {
+        act: `初始化：栈是空的，last = ${valOf(byId, last)}（还没访问过任何结点）`,
+      }),
+    ],
   }
   if (!nodes.length) return
 
@@ -716,6 +877,9 @@ function* runPostorderIter(data: number[]): AlgoRunner {
     }),
     comment: `工作指针 p 指向根结点 ${valOf(byId, p)}；last（上一个被访问的结点）初值为 NULL —— 它就是判断"右子树是否已访问"的依据`,
     vars: { 栈深: 0, 已访问: 0 },
+    boards: [
+      stackBoard(stack, byId, { act: `p 指向根 ${valOf(byId, p)}，还没压栈；last = ${valOf(byId, last)}` }),
+    ],
   }
 
   while (p || stack.length) {
@@ -734,6 +898,12 @@ function* runPostorderIter(data: number[]): AlgoRunner {
         }),
         comment: `① 结点 ${n.value} 压栈：后序要等它的左右子树都访问完，所以现在还不能访问它，先记着。栈深变成 ${stack.length}`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            hot: p,
+            act: `${n.value} 压栈：左右子树都还没走完，先记着；last = ${valOf(byId, last)}`,
+          }),
+        ],
       }
 
       p = n.left ?? null
@@ -751,6 +921,13 @@ function* runPostorderIter(data: number[]): AlgoRunner {
           ? `② p = p->left，继续往左下走，指向 ${valOf(byId, p)}`
           : `② p = p->left 得到空，左链走到头 —— 该看栈顶了，但只看不弹`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            act:
+              (p ? `p 走到 ${valOf(byId, p)}` : 'p 变成空，左链到头了') +
+              `，栈没动；last = ${valOf(byId, last)}`,
+          }),
+        ],
       }
     } else {
       const top = stack[stack.length - 1]!
@@ -769,6 +946,12 @@ function* runPostorderIter(data: number[]): AlgoRunner {
         }),
         comment: `③ p 为空，取栈顶 top = ${valOf(byId, top)}，但**先不弹** —— 得先确认它的右子树访问完了没有`,
         vars: { 栈深: stack.length, 已访问: done.length },
+        boards: [
+          stackBoard(stack, byId, {
+            focus: stack.length - 1,
+            act: `看栈顶 top = ${tn.value}（红色那格），先不弹；last = ${valOf(byId, last)}`,
+          }),
+        ],
       }
 
       if (right && last !== right) {
@@ -785,6 +968,11 @@ function* runPostorderIter(data: number[]): AlgoRunner {
           }),
           comment: `④ 栈顶 ${valOf(byId, top)} 的右孩子是 ${valOf(byId, right)}，而 last = ${valOf(byId, last)} 不等于它 —— 说明右子树还没访问过，所以不能访问栈顶，先转去右子树`,
           vars: { 栈深: stack.length, 已访问: done.length },
+          boards: [
+            stackBoard(stack, byId, {
+              act: `右子树 ${valOf(byId, right)} 还没访问（它 != last = ${valOf(byId, last)}），先转过去；栈没动`,
+            }),
+          ],
         }
       } else {
         done.push(top)
@@ -802,6 +990,11 @@ function* runPostorderIter(data: number[]): AlgoRunner {
             ? `⑤ 栈顶 ${valOf(byId, top)} 的右子树根是 ${valOf(byId, right)}，而 last = ${valOf(byId, last)} 正好等于它 —— 说明右子树刚访问完，现在左右都完了，可以访问 ${valOf(byId, top)} 了`
             : `⑤ 栈顶 ${valOf(byId, top)} 根本没有右子树，左边也已经走完，所以可以直接访问它（第 ${done.length} 个）`,
           vars: { 栈深: stack.length, 已访问: done.length },
+          boards: [
+            stackBoard(stack, byId, {
+              act: `访问栈顶 ${valOf(byId, top)}，但它还在栈里（下一步才弹）；last 现在还是 ${valOf(byId, last)}`,
+            }),
+          ],
         }
 
         last = top
@@ -817,6 +1010,12 @@ function* runPostorderIter(data: number[]): AlgoRunner {
           }),
           comment: `⑥ 把 last 更新为刚访问的 ${valOf(byId, last)} —— 这一步就是为了回答"右子树是否已访问"：下次再看栈顶时，只要 last 等于栈顶的右孩子，就说明它的右子树处理完了`,
           vars: { 栈深: stack.length, 已访问: done.length },
+          boards: [
+            stackBoard(stack, byId, {
+              focus: stack.length - 1,
+              act: `last 更新成 ${valOf(byId, last)} —— 它此刻还压在栈顶（红色那格），下一步才出栈`,
+            }),
+          ],
         }
 
         stack.pop()
@@ -832,6 +1031,11 @@ function* runPostorderIter(data: number[]): AlgoRunner {
           }),
           comment: `⑦ ${valOf(byId, top)} 已经访问完了，它彻底没用了，出栈。栈深 ${stack.length + 1} -> ${stack.length}，接下来回到它的祖先`,
           vars: { 栈深: stack.length, 已访问: done.length },
+          boards: [
+            stackBoard(stack, byId, {
+              act: `刚弹出 ${valOf(byId, top)}：它已经不在栈里了，可 last 还记着它（last = ${valOf(byId, last)}）—— 这就是后序判断"右子树是否已访问"的依据`,
+            }),
+          ],
         }
       }
     }
@@ -844,6 +1048,11 @@ function* runPostorderIter(data: number[]): AlgoRunner {
     tree: completeTreeView(data, { done: [...done], note: '后序非递归结束' }),
     comment: `栈空了、p 也空了，遍历结束。访问顺序是：${orderText(done, byId)}`,
     vars: { 栈深: 0, 已访问: done.length },
+    boards: [
+      stackBoard(stack, byId, {
+        act: `栈空了，遍历结束；last = ${valOf(byId, last)} 是最后访问的那个，它也不在栈里了`,
+      }),
+    ],
   }
 }
 

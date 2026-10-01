@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { PALETTE, css, type RGB } from '@/core/palette'
 import type { TreeNodeSnapshot, TreeView } from '@/core/types'
+import ScenePanel from '@/components/ScenePanel.vue'
 
 /**
  * 树 / 二叉树渲染器。
@@ -27,6 +28,12 @@ const PAD = 26
 
 const tv = computed<TreeView | null>(() => currentTree.value)
 const animMs = computed(() => `${animDuration.value}ms`)
+/**
+ * 树下面的补充板子。
+ * 非递归遍历光看结点上的小标签说不清"栈里到底存了什么、什么时候压弹"，
+ * 所以这些算法额外给一块数组板画栈 / 队列本身，这里把它接在树下面一起显示。
+ */
+const boards = computed(() => currentStep.value?.boards ?? [])
 
 /** 一个结点往下连的孩子（二叉树取 left/right，多叉树取 children） */
 function childrenOf(n: TreeNodeSnapshot): string[] {
@@ -280,6 +287,11 @@ const pointerLabels = computed(() => {
     </div>
 
     <p v-if="tv.note" class="tree-note">{{ tv.note }}</p>
+
+    <!-- 栈 / 队列的画面：接在树下面 -->
+    <div v-if="boards.length" class="boards-slot">
+      <ScenePanel />
+    </div>
   </div>
 </template>
 
@@ -292,10 +304,24 @@ const pointerLabels = computed(() => {
 }
 
 .scroller {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding: 10px 0;
+}
+
+/* 树下面的栈 / 队列板子：最多占 42% 高度，自己内部滚动 */
+.boards-slot {
+  flex: 0 0 auto;
+  max-height: 42%;
+  overflow: auto;
+  border-top: 1px solid #232a35;
+  padding-top: 6px;
+}
+
+.boards-slot :deep(.scene) {
+  height: auto;
+  padding-top: 6px;
 }
 
 .board {
