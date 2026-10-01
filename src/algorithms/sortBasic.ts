@@ -862,13 +862,7 @@ export const countSortSpec: AlgorithmSpec = {
 }
 
 // ---------------------------------------------------------------------------
-// 导出：注册表按这个数组的顺序显示（注册由 index.ts 负责）
+// 注册：本文件里的 spec 由 src/algorithms/index.ts 一个一个登记（插入类 / 交换类 /
+// 归并类 / 分配类各自连着写）。这里**不再提供聚合数组** —— 聚合数组的顺序一旦和
+// 注册表不一致，改分组的人就会以为改了这里就生效。
 // ---------------------------------------------------------------------------
-
-export const sortBasicSpecs: AlgorithmSpec[] = [
-  binInsertSortSpec,
-  shellSortSpec,
-  quickSortSpec,
-  mergeSortSpec,
-  countSortSpec,
-]

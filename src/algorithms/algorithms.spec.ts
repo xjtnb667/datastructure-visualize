@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { algorithmRegistry, getAlgorithm, getAlgorithmsByCategory, getGroupedByCategory } from './index'
+import {
+  DEFAULT_ALGORITHM_ID,
+  algorithmRegistry,
+  getAlgorithm,
+  getAlgorithmsByCategory,
+  getGroupedByCategory,
+} from './index'
 import { buildSteps, validateSteps } from '@/core/engine'
 import { CATEGORIES } from '@/core/categories'
 import { SEQ_CAPACITY } from '@/core/config'
@@ -194,14 +200,15 @@ describe('排序类算法', () => {
   /*
    * 排序大类下住着三拨东西，它们的"有序"不是一回事，断言必须分开：
    *   ① 数组类排序（renderer === 'array'）：整条序列就是一个数组，终态必然**整体升序**
-   *      （折半插入 / 希尔 / 快速 / 归并 / 计数 / 堆排序 / 基数排序都在这一拨）；
-   *   ② 堆（group === '堆'，renderer === 'scene'）：数组是堆的层序存储，只保证"父 ≥ 子"这个**偏序**，
+   *      （直接插入 / 折半插入 / 希尔 / 冒泡 / 快速 / 选择 / 堆排序 / 归并 / 计数 / 基数都在这一拨）；
+   *   ② 堆（group === '选择类排序' 且 renderer === 'scene'，也就是建堆 / 堆调整这两个结构演示）：
+   *      数组是堆的层序存储，只保证"父 ≥ 子"这个**偏序**，
    *      大根堆 [10, 8, 9, 7, ...] 本身并不是升序的 —— 之前就是拿"升序"去卡堆才红的；
    *   ③ 外部排序类（group === '外部排序'，renderer 是 scene / tree）：演的是"内存在外存之间倒腾记录"，
    *      画面主体是归并段 / 败者树 / 归并树，不能拿"整条序列升序"去卡它（置换-选择排序的终态就是几段拼起来的）。
    */
   const arraySorts = sortSpecs.filter((s) => s.renderer === 'array')
-  const heapSpecs = sortSpecs.filter((s) => s.group === '堆')
+  const heapSpecs = sortSpecs.filter((s) => s.group === '选择类排序' && s.renderer === 'scene')
   const externalSorts = sortSpecs.filter((s) => s.group === '外部排序')
 
   it('数组类排序、堆、外部排序三拨都非空，且排序大类里没有算法落在筛选条件之外', () => {
@@ -537,7 +544,17 @@ describe('查找类算法', () => {
     })
   }
 
-  for (const spec of searchSpecs.filter((s) => s.group === '平衡二叉树 AVL')) {
+  /*
+   * AVL 四种旋转和红黑树现在同属「平衡二叉树」**一个**子类（选择器里只画一个标题），
+   * 所以这里只能用 id 前缀把四种旋转挑出来 —— 红黑树没有平衡因子 bf，混进来会误判。
+   */
+  const avlRotations = searchSpecs.filter((s) => s.id.startsWith('avl-'))
+
+  it('AVL 四种旋转一个都不少（过滤条件写歪的话，下面那批用例会一条都不跑）', () => {
+    expect(avlRotations.map((s) => s.id)).toEqual(['avl-ll', 'avl-rr', 'avl-lr', 'avl-rl'])
+  })
+
+  for (const spec of avlRotations) {
     it(`${spec.name}：旋转之后每个结点的 |平衡因子| 都 ≤ 1（旋转真的做完了）`, () => {
       const input = prepared(spec)
       const last = buildSteps(spec, input, ctxOf(spec, input)).at(-1)!
@@ -883,38 +900,73 @@ describe('两级选择器的分组数据', () => {
   })
 
   it('排序和查找的子类标题按实际情况精确匹配（注册顺序变了这里就红）', () => {
-    const groupsOf = (cat: AlgoCategoryId) => getGroupedByCategory(cat).map((g) => g.group)
+    /** 组名 + 组内算法 id：既反映界面上画几个小标题，也盯住注册表里的相邻关系 */
+    const grouped = (cat: AlgoCategoryId) =>
+      getGroupedByCategory(cat).map((g) => [g.group, g.items.map((i) => i.id)])
+
     /*
-     * 注意 getGroupedByCategory 只把**相邻**的同 group 合并，所以「分配类排序」会出现两次：
-     * 计数排序（分配类）之后插了堆排序（选择类），基数排序（分配类）又把它接了回去。
-     * 这是注册顺序决定的，不是 bug，这里照实写 —— 顺序一变（新增算法插错位置）这条就会红。
+     * getGroupedByCategory 只把**相邻**的同 group 合并成一组，所以下面这份清单就是
+     * "选择器第二列会画出哪些小标题、每个标题下面挂着谁"。两条硬要求：
+     *   ① 组名互不重复 —— 同名组一旦被别的子类隔开，界面上就会冒出两个同名标题
+     *      （「计数排序 → 堆排序 → 基数排序」当年就是把「分配类排序」裂成了两组）；
+     *   ② 组内相邻 —— 就是这份清单本身：算法插错位置、group 写错，这里立刻红。
      */
-    expect(groupsOf('sort')).toEqual([
-      '', // 冒泡 / 选择 / 直接插入
-      '堆', // 建堆 / 堆调整
-      '插入类排序', // 折半插入 / 希尔
-      '交换类排序', // 快速
-      '归并类排序', // 归并
-      '分配类排序', // 计数
-      '选择类排序', // 堆排序
-      '分配类排序', // 基数（注册顺序不连续，所以又开了一组）
-      '外部排序', // 外部排序 / 败者树 / 置换-选择 / 最佳归并树
+    expect(grouped('sort')).toEqual([
+      ['插入类排序', ['insertion-sort', 'sort-bin-insert', 'sort-shell']],
+      ['交换类排序', ['bubble-sort', 'sort-quick']],
+      ['选择类排序', ['selection-sort', 'sort-heap', 'heap-build', 'heap-sift']],
+      ['归并类排序', ['sort-merge']],
+      ['分配类排序', ['sort-count', 'sort-radix']],
+      ['外部排序', ['sort-external', 'sort-loser-tree', 'sort-replace-select', 'sort-optimal-merge']],
     ])
-    expect(groupsOf('search')).toEqual([
-      '', // 顺序查找 / 折半查找
-      '二叉排序树', // 插入 / 查找 / 删除
-      '平衡二叉树 AVL', // LL / RR / LR / RL
-      '平衡二叉树', // 红黑树
-      '多路平衡查找树', // B 树 / B+ 树
-      '索引查找', // 分块查找 / 哈希表
+    expect(grouped('search')).toEqual([
+      ['线性表的查找', ['sequential-search', 'binary-search', 'search-block']],
+      ['二叉排序树', ['bst-insert', 'bst-search', 'bst-delete']],
+      ['平衡二叉树', ['avl-ll', 'avl-rr', 'avl-lr', 'avl-rl', 'rb-tree']],
+      ['多路平衡查找树', ['b-tree', 'b-plus-tree']],
+      ['散列表', ['search-hash']],
     ])
 
-    // 子类标题不是摆设：这两个大类里带名字的子类都得真的装着算法
+    // 子类标题不是摆设：组名不重复、没有空标题的组、每个组里都真的装着算法
     for (const cat of ['sort', 'search'] as const) {
-      const named = getGroupedByCategory(cat).filter((g) => g.group !== '')
-      expect(named.length, `${cat} 大类的子类不见了`).toBeGreaterThan(0)
-      for (const g of named) expect(g.items.length, `子类「${g.group}」空着`).toBeGreaterThan(0)
+      const groups = getGroupedByCategory(cat)
+      const names = groups.map((g) => g.group)
+      expect(new Set(names).size, `${cat} 大类的子类标题重名了：${names.join(' / ')}`).toBe(
+        names.length,
+      )
+      for (const g of groups) {
+        // 空 group 的组在选择器里不画标题，排序 / 查找这两块不该有这种组
+        expect(g.group, `${cat} 大类里出现了空标题的组`).not.toBe('')
+        expect(g.items.length, `子类「${g.group}」空着`).toBeGreaterThan(0)
+      }
     }
+  })
+})
+
+describe('默认算法与注册表顺序', () => {
+  it('默认算法是显式指定的，不随大类顺序 / 注册表顺序变化', () => {
+    /*
+     * 大类顺序调成"线性表在最上、排序在最下"之后，注册表第一条不再是排序算法。
+     * 默认算法必须是**写死**的冒泡排序，认不出的 id 也退回它 —— 否则"打开页面看到哪个
+     * 算法"这件事就悄悄由数组顺序决定了（当年 sort 在最前面时刚好蒙对）。
+     */
+    expect(DEFAULT_ALGORITHM_ID).toBe('bubble-sort')
+    expect(getAlgorithm(DEFAULT_ALGORITHM_ID).name).toBe('冒泡排序')
+    expect(getAlgorithm('这个 id 不存在').id).toBe(DEFAULT_ALGORITHM_ID)
+  })
+
+  it('大类顺序就是用户看到的左列顺序', () => {
+    expect(CATEGORIES.map((c) => c.name)).toEqual([
+      '线性表',
+      '栈',
+      '队列',
+      '数组与矩阵',
+      '串',
+      '树与二叉树',
+      '图',
+      '查找',
+      '排序',
+    ])
   })
 })
 

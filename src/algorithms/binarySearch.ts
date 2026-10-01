@@ -113,6 +113,7 @@ export const binarySearchSpec: AlgorithmSpec = {
   id: 'binary-search',
   name: '折半查找',
   category: 'search',
+  group: '线性表的查找',
   summary: '每次砍掉一半（要求有序）',
   complexity: { time: 'O(log n)', space: 'O(1)' },
   renderer: 'array',

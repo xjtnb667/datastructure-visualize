@@ -75,6 +75,7 @@ export const bubbleSortSpec: AlgorithmSpec = {
   id: 'bubble-sort',
   name: '冒泡排序',
   category: 'sort',
+  group: '交换类排序',
   summary: '相邻两两比较，大的往后冒',
   complexity: { time: 'O(n²)', space: 'O(1)', stable: true },
   renderer: 'array',

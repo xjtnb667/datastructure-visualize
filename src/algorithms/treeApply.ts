@@ -1626,76 +1626,6 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     createRunner: runHuffmanCode,
   },
   {
-    id: 'heap-build',
-    name: '建堆（自下而上）',
-    category: 'sort',
-    group: '堆',
-    summary: '从最后一个非叶结点 n/2-1 往前，逐个向下调整，O(n) 建堆',
-    complexity: { time: 'O(n)', space: 'O(1)' },
-    renderer: 'scene',
-    codeLines: CODE_HEAP_BUILD,
-    defaultData: () => [4, 10, 3, 5, 1, 2, 9, 7, 8],
-    // 数组长度 = 数据规模：选几个数据就画几个"结点"（数组格子就是堆的结点）
-    sizes: TREE_SIZES,
-    initComment: (data) => {
-      const a = heapFrames(data)
-      return `初始数组 [${a.join(', ')}]（下标 0 开始，一共 ${a.length} 个结点）。要把它整理成**大根堆**：每个结点都不小于它的两个孩子`
-    },
-    initScene: (data) => {
-      const a = heapFrames(data)
-      return {
-        boards: [
-          {
-            title: '初始数组（还不是堆）',
-            layout: 'row',
-            items: a.map((v, i) => ({ text: String(v), sub: String(i), tone: 'base' as const })),
-            note: `${HEAP_FORMULA}　n = ${a.length}，最后一个非叶结点下标是 n/2-1 = ${Math.floor(a.length / 2) - 1}`,
-          },
-        ],
-      }
-    },
-    createRunner: runHeapBuild,
-  },
-  {
-    id: 'heap-sift',
-    name: '堆调整（向下调整 / 筛选）',
-    category: 'sort',
-    group: '堆',
-    summary: '和**较大的**那个孩子比较，不满足大根堆就交换，然后继续往下',
-    complexity: { time: 'O(log n)', space: 'O(1)' },
-    renderer: 'scene',
-    codeLines: CODE_HEAP_SIFT,
-    defaultData: () => [1, 9, 8, 6, 5, 7, 4, 3, 2],
-    // 数组长度 = 数据规模
-    sizes: TREE_SIZES,
-    // 不管选多大规模、随机出什么数据，都先摆成"只有根不满足大根堆"的样子，
-    // 否则"向下调整 a[0]"的前提不成立，解说词就成了假话
-    prepareData: heapSiftReady,
-    initComment: (data) => {
-      const a = heapFrames(data)
-      return `数组 [${a.join(', ')}]（一共 ${a.length} 个结点）里除了根结点 a[0] = ${a[0]}，其余子树都已经是大根堆。现在单独对 a[0] 做一次向下调整`
-    },
-    initScene: (data) => {
-      const a = heapFrames(data)
-      return {
-        boards: [
-          {
-            title: '准备向下调整 a[0]',
-            layout: 'row',
-            items: a.map((v, i) => ({
-              text: String(v),
-              sub: String(i),
-              tone: i === 0 ? ('hot' as const) : ('base' as const),
-            })),
-            pointers: { i: 0 },
-            note: `${HEAP_FORMULA}　大根堆：父结点 >= 两个孩子`,
-          },
-        ],
-      }
-    },
-    createRunner: runHeapSift,
-  },
-  {
     id: 'uf-find',
     name: '并查集·Find（查找根 + 路径压缩）',
     category: 'tree',
@@ -1748,5 +1678,86 @@ export const treeApplySpecs: AlgorithmSpec[] = [
       })
     },
     createRunner: runUfUnion,
+  },
+]
+
+/**
+ * 建堆 / 堆调整（`renderer: 'scene'`）。
+ *
+ * 它们的**大类是「排序」**：这两个演示就是堆排序的前两步（先自下而上建大根堆、
+ * 再单独看一次向下调整），所以和「堆排序」同属排序大类的「选择类排序」组。
+ * 注册由 `algorithms/index.ts` 负责，且必须紧挨着堆排序 —— 选择器只合并
+ * **相邻**的同名子类，插到别处就会在界面上多出一个同名标题。
+ */
+export const heapSpecs: AlgorithmSpec[] = [
+  {
+    id: 'heap-build',
+    name: '建堆（自下而上）',
+    category: 'sort',
+    group: '选择类排序',
+    summary: '从最后一个非叶结点 n/2-1 往前，逐个向下调整，O(n) 建堆',
+    complexity: { time: 'O(n)', space: 'O(1)' },
+    renderer: 'scene',
+    codeLines: CODE_HEAP_BUILD,
+    defaultData: () => [4, 10, 3, 5, 1, 2, 9, 7, 8],
+    // 数组长度 = 数据规模：选几个数据就画几个"结点"（数组格子就是堆的结点）
+    sizes: TREE_SIZES,
+    initComment: (data) => {
+      const a = heapFrames(data)
+      return `初始数组 [${a.join(', ')}]（下标 0 开始，一共 ${a.length} 个结点）。要把它整理成**大根堆**：每个结点都不小于它的两个孩子`
+    },
+    initScene: (data) => {
+      const a = heapFrames(data)
+      return {
+        boards: [
+          {
+            title: '初始数组（还不是堆）',
+            layout: 'row',
+            items: a.map((v, i) => ({ text: String(v), sub: String(i), tone: 'base' as const })),
+            note: `${HEAP_FORMULA}　n = ${a.length}，最后一个非叶结点下标是 n/2-1 = ${Math.floor(a.length / 2) - 1}`,
+          },
+        ],
+      }
+    },
+    createRunner: runHeapBuild,
+  },
+  {
+    id: 'heap-sift',
+    name: '堆调整（向下调整 / 筛选）',
+    category: 'sort',
+    group: '选择类排序',
+    summary: '和**较大的**那个孩子比较，不满足大根堆就交换，然后继续往下',
+    complexity: { time: 'O(log n)', space: 'O(1)' },
+    renderer: 'scene',
+    codeLines: CODE_HEAP_SIFT,
+    defaultData: () => [1, 9, 8, 6, 5, 7, 4, 3, 2],
+    // 数组长度 = 数据规模
+    sizes: TREE_SIZES,
+    // 不管选多大规模、随机出什么数据，都先摆成"只有根不满足大根堆"的样子，
+    // 否则"向下调整 a[0]"的前提不成立，解说词就成了假话
+    prepareData: heapSiftReady,
+    initComment: (data) => {
+      const a = heapFrames(data)
+      return `数组 [${a.join(', ')}]（一共 ${a.length} 个结点）里除了根结点 a[0] = ${a[0]}，其余子树都已经是大根堆。现在单独对 a[0] 做一次向下调整`
+    },
+    initScene: (data) => {
+      const a = heapFrames(data)
+      return {
+        boards: [
+          {
+            title: '准备向下调整 a[0]',
+            layout: 'row',
+            items: a.map((v, i) => ({
+              text: String(v),
+              sub: String(i),
+              tone: i === 0 ? ('hot' as const) : ('base' as const),
+            })),
+            pointers: { i: 0 },
+            note: `${HEAP_FORMULA}　大根堆：父结点 >= 两个孩子`,
+          },
+        ],
+      }
+    },
+    createRunner: runHeapSift,
   },
 ]

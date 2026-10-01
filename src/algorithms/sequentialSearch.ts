@@ -78,6 +78,7 @@ export const sequentialSearchSpec: AlgorithmSpec = {
   id: 'sequential-search',
   name: '顺序查找',
   category: 'search',
+  group: '线性表的查找',
   summary: '从头到尾一个一个比对',
   complexity: { time: 'O(n)', space: 'O(1)' },
   renderer: 'array',

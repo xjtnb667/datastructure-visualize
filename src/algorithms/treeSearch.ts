@@ -1366,7 +1366,7 @@ function avlSpec(kind: AvlKind, id: string, name: string, summary: string, data:
     id,
     name,
     category: 'search',
-    group: '平衡二叉树 AVL',
+    group: '平衡二叉树',
     summary,
     complexity: { time: 'O(log n)', space: 'O(log n)（递归回溯的栈）' },
     renderer: 'tree',

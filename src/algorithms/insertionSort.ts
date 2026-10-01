@@ -83,6 +83,7 @@ export const insertionSortSpec: AlgorithmSpec = {
   id: 'insertion-sort',
   name: '直接插入排序',
   category: 'sort',
+  group: '插入类排序',
   summary: '把新元素插入到左边有序区',
   complexity: { time: 'O(n²)', space: 'O(1)', stable: true },
   renderer: 'array',

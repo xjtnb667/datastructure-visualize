@@ -275,7 +275,7 @@ export const blockSearchSpec: AlgorithmSpec = {
   id: 'search-block',
   name: '分块查找',
   category: 'search',
-  group: '索引查找',
+  group: '线性表的查找',
   summary: '先查索引表定块，再在块内顺序查',
   complexity: { time: 'O(√n)（索引 (b+1)/2 + 块内 (s+1)/2）', space: 'O(b) 的索引表' },
   renderer: 'array',
@@ -582,7 +582,7 @@ export const hashSearchSpec: AlgorithmSpec = {
   id: 'search-hash',
   name: '哈希表查找',
   category: 'search',
-  group: '索引查找',
+  group: '散列表',
   summary: '算桶号直接定位，冲突用链地址法挂在同一个桶上',
   complexity: { time: 'O(1) 平均（冲突多时 O(1 + α)）', space: 'O(n + M)' },
   renderer: 'scene',
@@ -596,5 +596,7 @@ export const hashSearchSpec: AlgorithmSpec = {
   createRunner: hashSearch,
 }
 
-/** 注册用：两个查找类算法 */
-export const searchMoreSpecs: AlgorithmSpec[] = [blockSearchSpec, hashSearchSpec]
+/*
+ * 注册：分块查找属于「线性表的查找」（和顺序 / 折半查找连着写），
+ * 哈希表单独一组「散列表」。顺序以 src/algorithms/index.ts 为准。
+ */

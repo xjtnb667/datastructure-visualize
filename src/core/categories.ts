@@ -3,32 +3,13 @@ import type { AlgoCategoryId, CategoryMeta } from './types'
 /**
  * 算法大类（SRS FR-03）。
  * 新增一个大类只需要在这里加一项，两级选择器会自动多出一列。
+ *
+ * 数组顺序 = 选择器左列从上到下的显示顺序，也决定"上一个 / 下一个算法"这类
+ * 按大类遍历的行为。所以这里按教材的章节顺序排：
+ * 线性表 → 栈 → 队列 → 数组 → 串 → 树与二叉树 → 图 → 查找 → 排序。
+ * 注意 CATEGORIES[0] 是 getCategory() 找不到时的兜底项，改动顺序会改变兜底结果。
  */
 export const CATEGORIES: CategoryMeta[] = [
-  {
-    id: 'sort',
-    name: '排序',
-    summary: '把数据按大小重新排列',
-    legend: [
-      { color: '#3f6fd8', label: '未排序' },
-      { color: '#f59e0b', label: '比较中' },
-      { color: '#ef4444', label: '交换 / 移动' },
-      { color: '#10b981', label: '已就位' },
-      { color: '#8b5cf6', label: '当前指针' },
-    ],
-  },
-  {
-    id: 'search',
-    name: '查找',
-    summary: '在数据中定位目标值',
-    legend: [
-      { color: '#3f6fd8', label: '候选区间内' },
-      { color: '#f59e0b', label: '正在比较' },
-      { color: '#8b5cf6', label: 'mid 指针' },
-      { color: '#10b981', label: '已命中' },
-      { color: '#3a4150', label: '已排除（变暗）' },
-    ],
-  },
   {
     id: 'linear',
     name: '线性表',
@@ -112,6 +93,30 @@ export const CATEGORIES: CategoryMeta[] = [
       { color: '#f59e0b', label: '当前选中 / 松弛中' },
       { color: '#10b981', label: '已确定 / 已加入' },
       { color: '#ef4444', label: '被排除 / 冲突' },
+    ],
+  },
+  {
+    id: 'search',
+    name: '查找',
+    summary: '在数据中定位目标值',
+    legend: [
+      { color: '#3f6fd8', label: '候选区间内' },
+      { color: '#f59e0b', label: '正在比较' },
+      { color: '#8b5cf6', label: 'mid 指针' },
+      { color: '#10b981', label: '已命中' },
+      { color: '#3a4150', label: '已排除（变暗）' },
+    ],
+  },
+  {
+    id: 'sort',
+    name: '排序',
+    summary: '把数据按大小重新排列',
+    legend: [
+      { color: '#3f6fd8', label: '未排序' },
+      { color: '#f59e0b', label: '比较中' },
+      { color: '#ef4444', label: '交换 / 移动' },
+      { color: '#10b981', label: '已就位' },
+      { color: '#8b5cf6', label: '当前指针' },
     ],
   },
 ]

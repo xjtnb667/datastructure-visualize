@@ -87,6 +87,7 @@ export const selectionSortSpec: AlgorithmSpec = {
   id: 'selection-sort',
   name: '选择排序',
   category: 'sort',
+  group: '选择类排序',
   summary: '每轮选出最小值放到前面',
   complexity: { time: 'O(n²)', space: 'O(1)', stable: false },
   renderer: 'array',

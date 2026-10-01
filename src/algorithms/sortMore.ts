@@ -1687,14 +1687,7 @@ export const optimalMergeSpec: AlgorithmSpec = {
 }
 
 /* ============================================================================
- * 注册表
+ * 注册：本文件里的 spec 由 src/algorithms/index.ts 按子类登记
+ *（堆排序 + heapSpecs 组「选择类排序」、基数排序组「分配类排序」、
+ *  其余四个组「外部排序」）。顺序以 index.ts 为准，这里不提供聚合数组。
  * ========================================================================== */
-
-export const sortMoreSpecs: AlgorithmSpec[] = [
-  heapSortSpec,
-  radixSortSpec,
-  externalSortSpec,
-  loserTreeSpec,
-  replaceSelectSpec,
-  optimalMergeSpec,
-]

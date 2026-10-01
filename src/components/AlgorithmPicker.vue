@@ -306,12 +306,23 @@ onBeforeUnmount(() => {
   padding: 6px;
 }
 
+/*
+ * 小类标题（分组名）：白色 + 加粗 + 高亮。
+ * 高亮用"左侧琥珀色竖条 + 极淡同色底"——颜色取自 palette 的 compare 色 (#f59e0b)，
+ * 刻意和"当前选中的算法"（.algo-item.on 的蓝色底 + #79abff 名字）分开色系：
+ * 标题是分组标识，一眼能扫到，但不会盖过选中项。
+ * 左边距 8px + 3px 竖条 = 11px，和 .algo-item 的文字左边缘对齐。
+ */
 .group-title {
-  margin: 6px 0 2px;
-  padding: 0 11px;
-  font-size: 11px;
-  color: #5c6674;
+  margin: 8px 0 3px;
+  padding: 3px 10px 3px 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #ffffff;
   letter-spacing: 0.5px;
+  background: rgba(245, 158, 11, 0.14);
+  border-left: 3px solid #f59e0b;
+  border-radius: 3px;
 }
 
 .group-title:first-child {
