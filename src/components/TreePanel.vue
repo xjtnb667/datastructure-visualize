@@ -267,6 +267,14 @@ const pointerLabels = computed(() => {
     </div>
 
     <div ref="scrollerEl" class="scroller">
+      <!--
+        外面这层「板子盒子」的尺寸是**缩放后**的，它参与布局；
+        里面那层才是原始尺寸的板子，只做 transform: scale，原点在左上角。
+        这样缩放后是真正居中、四边都不会被裁掉。
+        （之前直接在板子上 transform-origin: top center，是绕"未缩放的大盒子"中心缩的，
+          可视框比它窄，结果整体右移、右边被切掉。）
+      -->
+      <div class="board-outer" :style="{ width: `${boxW * scale}px`, height: `${boxH * scale}px` }">
       <div
         class="board"
         :style="{
@@ -274,7 +282,7 @@ const pointerLabels = computed(() => {
           height: `${boxH}px`,
           '--anim': animMs,
           transform: `scale(${scale})`,
-          transformOrigin: 'top center',
+          transformOrigin: 'top left',
         }"
       >
         <svg class="edges" :width="boxW" :height="boxH">
@@ -325,6 +333,7 @@ const pointerLabels = computed(() => {
           :style="{ transform: `translate(${p.x}px, ${p.y}px)` }"
         >{{ p.name }}</div>
       </div>
+      </div>
     </div>
 
     <p v-if="tv.note" class="tree-note">{{ tv.note }}</p>
@@ -372,6 +381,10 @@ const pointerLabels = computed(() => {
   height: auto;
   padding-top: 6px;
   padding-bottom: 2px;
+}
+
+.board-outer {
+  margin: 0 auto;
 }
 
 .board {
