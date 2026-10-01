@@ -30,17 +30,27 @@ import type {
  *   - done = 已经访问完的顶点（绿色）；
  *   - badges = 顶点旁边的小标签：DFS/BFS 写访问次序，拓扑排序写入度；
  *   - edges 的 tone：hot = 本步正在走的那条边（紫色加粗）、done = 已经走过的边（绿色）、
- *     dim = 已经被删掉的边（灰色虚线，拓扑排序用）；
+ *     mark = 环上的边（红色，只有拓扑排序失败时才会出现）；
  *   - 边上的 label 写的是**走过的步数**（DFS 深度、BFS 层次、拓扑的删除次序），
  *     w 写的是边的编号 —— 两个小字画在边的两侧，不会叠在一起。
  *
+ * 拓扑排序的特殊之处（4 个算法里只有它这样）
+ * ------------------------------------------
+ *   输出的顶点**真的会从图上消失**：每输出一个顶点，那一帧起它的 id 就不在 `nodes` 里了，
+ *   `edges` 里所有 `from` 等于它的边也一起没了（不是变灰、也不是留灰色虚线）。
+ *   于是 `hot` / `done` / `badges` 里**绝不能再出现已经被删掉的顶点** ——
+ *   校验器（`validateSteps`）会因为"引用了不存在的顶点"当场抛错。
+ *   所以这张图的每一帧都由 `runTopo` 里的 `topoView()` **统一收口**：按"还在图上的顶点"
+ *   过滤顶点、边和 hot / done / badges / sub，任何一帧都不可能漏写。
+ *   顶点坐标按它在圆环上的**原始**序号算，所以删掉几个顶点之后，剩下的人位置全程不动。
+ *
  * 板子约定
  * --------
- *   图下面挂一块数组板，把递归栈 / 栈 / 队列**整个摊开**：
+ *   图下面挂数组板，把递归栈 / 栈 / 队列 / 已输出的顶点**整个摊开**：
  *   - 竖排（column）第 0 格在**最下面**：`items` 从栈底往栈顶排，最后一格是栈顶，
  *     指针「栈顶」指向最后一格（下标 = 栈长 - 1）；空栈不给指针；
  *   - 横排（row）第 0 格在最左边：`items` 从队首往队尾排，指针「队首」指向第 0 格；
- *     空队列同样不给指针。
+ *     空队列同样不给指针；拓扑排序的「已输出」板子也从第 0 格开始往右一格一格攒。
  *
  * 起点：4 个算法都从 V1 出发（V1 是唯一的"入口"顶点）。
  */
@@ -121,6 +131,11 @@ function undirectedEdges(n: number): string[] {
  *   ② 再补 4 条"跨层"边，只从小号指向大号，所以**天然无环**：
  *      V1->V3、V2->V4、V1->V4 让 V3 / V4 的前驱明显比别人多，
  *      V(n-2)->Vn 让汇点有两个前驱 —— 中间顶点的入度有大有小，演示才有看头。
+ *
+ * 出度正好够拓扑排序的动画用：主链保证 Vi 一定指向 V(i+1)，所以**除了最后的汇点 Vn，
+ * 每个被输出的顶点都至少有一条出边**（n = 5..9 逐个数过）——
+ * "输出一个顶点，它和以它为起点的出边一起消失"这一步，每一步都删得到边，
+ * 不会出现"删了个没边的顶点、看不出删边效果"的空帧。
  */
 function directedEdges(n: number): string[] {
   const out: string[] = []
@@ -323,6 +338,31 @@ function queueBoard(queue: string[], opts: { hot?: string; note: string }): Boar
     })),
     pointers: n ? { 队首: 0 } : {},
     note: opts.note,
+  }
+}
+
+/**
+ * 「已输出（拓扑序）」板子：每输出一个顶点就往右接一格，按输出先后排。
+ *
+ * 为什么拓扑排序非要这块板子：它输出的顶点会**真的从图上删掉**（连同出边），
+ * 删完之后图里就再也看不到它们了 —— 没有这块板子，用户看完就"忘了前面输出了什么、
+ * 拓扑序到底长什么样"。板子上的格子就是答案本身。
+ *
+ * 一个都没输出时也是一块**空板子**（note 写明"还没输出任何顶点"）：
+ * 它每一帧都在，位置不跳，输出第一个顶点时是"第 0 格长出第 1 格"，
+ * 不会出现"板子凭空冒出来"的突兀感。最新那一格点紫色，一眼看出刚输出的是谁。
+ * 不挂指针 —— 「队首」那类指针是"下一个要处理谁"，结果板子没有这个语义。
+ */
+function topoOutBoard(out: string[]): BoardView {
+  return {
+    title: out.length ? `已输出（拓扑序，共 ${out.length} 个）` : '已输出（拓扑序）',
+    layout: 'row',
+    items: out.map((v, i) => ({
+      text: v,
+      sub: String(i + 1),
+      tone: i === out.length - 1 ? 'hot' : 'done',
+    })),
+    note: out.length ? `已经输出的顶点，按先后排：${out.join(' → ')}` : '还没输出任何顶点',
   }
 }
 
@@ -1003,20 +1043,21 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
 /* ------------------------------------------------------------------ */
 
 const CODE_TOPO = [
-  'Status TopoSort(Graph G) {          // AOV 网：顶点表示活动，有向边表示先后次序',
-  '  FindInDegree(G, indegree);        // ① 统计每个顶点的入度',
+  'Status TopoSort(Graph G) {            // AOV 网：顶点表示活动，有向边表示先后次序',
+  '  FindInDegree(G, indegree);          // ① 统计每个顶点的入度',
   '  InitStack(S);',
   '  for (i = 0; i < G.vexnum; i++)',
-  '    if (indegree[i] == 0) Push(S, i);   // ② 入度为 0 的顶点（没有前驱）先入栈',
+  '    if (indegree[i] == 0) Push(S, i);  // ② 入度为 0 的顶点（没有前驱）先入栈（用队列也一样）',
   '  count = 0;',
   '  while (!StackEmpty(S)) {',
-  '    i = Pop(S); print(i); count++;      // ③ 弹出一个入度 0 的顶点输出',
-  '    for (p = G.vertices[i].firstarc; p; p = p->nextarc) {',
+  '    i = Pop(S); print(i); count++;     // ③ 弹出一个入度 0 的顶点输出：它是拓扑序的下一个',
+  '    DeleteVex(G, i);                   // ④ 输出完立刻删掉它：顶点 i 和以它起点的所有出边一起消失',
+  '    for (p = i.firstarc; p; p = p->nextarc) {',
   '      k = p->adjvex;',
-  '      if (--indegree[k] == 0) Push(S, k); // ④ 删掉这条边：后继入度减 1，减到 0 就入栈',
+  '      if (--indegree[k] == 0) Push(S, k); // ⑤ 每少一条出边，后继入度减 1；减到 0 就入栈',
   '    }',
   '  }',
-  '  if (count < G.vexnum) return ERROR;  // ⑤ 还有顶点没输出 -> 图里有环',
+  '  if (count < G.vexnum) return ERROR;  // ⑥ 还有顶点没输出 -> 图里有环',
   '  return OK;',
   '}',
 ]
@@ -1031,36 +1072,119 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
   /** 每个顶点的**当前**入度：初始值由主链 + 4 条跨层边决定（首帧解说里会报出来），之后每删一条边就减 1 */
   const indeg = new Map(g.initIndeg)
 
-  /** 板子上的"入度为 0 的顶点"队列：队首是等下要弹出的那个 */
-  const queue: string[] = []
-  /** 已经输出（弹出）的顶点，按顺序 */
-  const out: string[] = []
-  /** 已经被删掉的边 */
-  const removed = new Set<string>()
+  /**
+   * **还留在图上**的顶点。
+   *
+   * 这个算法和别的算法最大的区别就在这里：输出的顶点会被**真的删掉**（连同它的出边），
+   * 所以"现在图上还剩谁"必须单独记一份 —— 边表也跟着它现算：
+   * 一条边只在它的**起点**被删时消失，而起点被删时它的终点一定还在（边只从小号指向大号），
+   * 所以"两端都还活着"就等于"这条边还没被删"，不用再单独维护一张被删边表。
+   */
+  const alive = new Set(ALL_V)
+  /**
+   * 顶点名 -> 它在圆环上的**原始**序号。
+   * 删掉几个顶点之后，剩下的顶点位置要纹丝不动，就是靠"坐标只认名字、不认当前第几个"。
+   */
+  const ringIdx = (v: string): number => Number(v.slice(1)) - 1
 
-  const badges = (): Record<string, string> => {
-    const b: Record<string, string> = {}
-    for (const v of ALL_V) b[v] = `入度${indeg.get(v)}`
-    return b
+  /** 板子上的"入度为 0、等着被输出"的队列：队首是下一步要弹出的那个 */
+  const queue: string[] = []
+  /** 已经输出的顶点，按输出先后排 —— 「已输出」板子上的格子就是它 */
+  const out: string[] = []
+
+  /** 还在图上的边（key 形如 `V1>V2`） */
+  const liveEdgeKeys = (): Set<string> => {
+    const s = new Set<string>()
+    for (const e of edges) {
+      const [a, b] = e.split('->') as [string, string]
+      if (alive.has(a) && alive.has(b)) s.add(ekey(a, b))
+    }
+    return s
   }
 
-  const view = (opts: {
-    hot?: string[]
-    outDone?: string[]
-    mark?: EdgeMark
-    sub?: (i: number) => string | undefined
-    note?: string
-  }): GraphView =>
-    buildView(g, {
-      hot: opts.hot ?? [],
-      done: opts.outDone ?? [...out],
-      badges: badges(),
-      mark: opts.mark,
-      sub: opts.sub,
-      note: opts.note,
-    })
+  /** 已经被删掉的边 —— 图有环时"剩下的那些"就是环上的边（收尾帧标红用） */
+  const removedKeys = (): Set<string> => {
+    const live = liveEdgeKeys()
+    const s = new Set<string>()
+    for (const e of edges) {
+      const [a, b] = e.split('->') as [string, string]
+      if (!live.has(ekey(a, b))) s.add(ekey(a, b))
+    }
+    return s
+  }
 
-  const board = (opts: { hot?: string; note: string }): BoardView => queueBoard(queue, opts)
+  /**
+   * 每个顶点的当前入度表（key 是**所有**顶点，包括已经删掉的）。
+   * 已经删掉的那些由 `topoView` 统一滤掉，所以这里不用自己判断。
+   */
+  const indegBadges = (): Record<string, string> =>
+    Object.fromEntries(ALL_V.map((v) => [v, `入度${indeg.get(v)}`]))
+
+  /**
+   * 造一帧**拓扑排序专用**的图快照 —— 全算法唯一的收口处。
+   *
+   * 这张图上的顶点和边会真的少下去，所以每一个引用都必须先过一遍 `alive`：
+   *   1. 顶点只画还活着的，边只画**两端都还活着**的；
+   *   2. `hot` / `done` / `badges` 里绝不能残留已经删掉的顶点 —— 校验器会因为
+   *      "引用了不存在的顶点"当场抛错（这是本算法最容易踩的坑）。这里一律过滤，
+   *      所以在每个 yield 里都不需要手写"哪些顶点已经没了"，也不可能漏写；
+   *   3. `sub` 只对**还在图上**的顶点求值，给已删顶点留的小字不会画出来；
+   *   4. 边的编号 `w` 用它**原始**边表里的位置：删掉几条边之后，剩下的边不会重新编号；
+   *   5. 顶点坐标用它在圆环上的**原始**序号算 —— 删掉同伴后，剩下的人位置一点不动。
+   */
+  const topoView = (opts: {
+    hot?: string[]
+    done?: string[]
+    badges?: Record<string, string>
+    /** 顶点下方那行小字（只会为还在图上的顶点调用） */
+    sub?: (v: string) => string | undefined
+    mark?: EdgeMark
+    note?: string
+  } = {}): GraphView => {
+    const live = ALL_V.filter((v) => alive.has(v))
+    const liveSet = new Set(live)
+    const m = opts.mark ?? emptyMark()
+    const liveEdges: GraphEdgeSnapshot[] = []
+    edges.forEach((e, k) => {
+      const [a, b] = e.split('->') as [string, string]
+      if (!liveSet.has(a) || !liveSet.has(b)) return
+      const key = ekey(a, b)
+      liveEdges.push({
+        from: a,
+        to: b,
+        w: k + 1,
+        directed: true,
+        tone: m.tone.get(key),
+        label: m.label.get(key),
+      })
+    })
+    return {
+      nodes: live.map((v) => ({ id: v, label: v, ...ring(ringIdx(v), N), sub: opts.sub?.(v) })),
+      edges: liveEdges,
+      hot: (opts.hot ?? []).filter((v) => liveSet.has(v)),
+      done: (opts.done ?? []).filter((v) => liveSet.has(v)),
+      badges: Object.fromEntries(
+        Object.entries(opts.badges ?? {}).filter(([v]) => liveSet.has(v)),
+      ),
+      note: opts.note,
+    }
+  }
+
+  /** 顶点下方的小字：默认"入度见表"（入度的真值写在旁边的黄标签上），个别顶点可以特写 */
+  const subOf =
+    (extra: Record<string, string> = {}) =>
+    (v: string): string =>
+      extra[v] ?? '入度见表'
+
+  /**
+   * 这一帧挂的两块板子，**每帧都给**：
+   *   左：「已输出（拓扑序）」—— 每输出一个顶点就接一格，结果全靠它攒着；
+   *   右：「队列」—— 当前入度为 0、等着被输出的顶点，指针「队首」指向第 0 格（空队列不给指针）。
+   */
+  const boardPair = (opts: { hot?: string; note: string }): BoardView[] => [
+    topoOutBoard(out),
+    queueBoard(queue, opts),
+  ]
 
   /**
    * 这个顶点的入度是不是**已经归零、并且已经排进队了**（或者已经输出了）。
@@ -1080,14 +1204,14 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 2,
     action: 'init',
     array: seq,
-    graph: buildView(g, {
-      badges: badges(),
-      sub: () => '入度见表',
-      note: 'AOV 网：顶点是活动，有向边 u->v 表示 u 必须先于 v',
+    graph: topoView({
+      badges: indegBadges(),
+      sub: subOf(),
+      note: `AOV 网：顶点是活动，有向边 u->v 表示 u 必须先于 v；顶点旁的黄标签就是当前入度`,
     }),
-    boards: [queueBoard([], { note: '还没开始找：入度为 0 的顶点是 ' + zeroInit.join('、') })],
-    comment: `① 统计每个顶点的入度，写在顶点旁边的小标签上：${ALL_V.map((v) => `${v} 入度 ${indeg.get(v)}`).join('，')}。只有 ${zeroInit.join('、')} 入度为 0 —— 没有前驱，可以从它开始`,
-    vars: { n: N, 输出个数: 0, 入度0个数: zeroInit.length },
+    boards: boardPair({ note: `还没开始找：入度为 0 的顶点是 ${zeroInit.join('、')}` }),
+    comment: `① 统计每个顶点的入度，写在顶点旁边的小标签上：${ALL_V.map((v) => `${v} 入度 ${indeg.get(v)}`).join('，')}。只有 ${zeroInit.join('、')} 入度为 0 —— 没有前驱，可以从它开始。这张图一共 ${edges.length} 条边，除了最后的汇点 ${ALL_V[N - 1]}，每个顶点都至少有一条出边，所以每输出一个顶点都能看到"删结点连带删出边"`,
+    vars: { n: N, 输出个数: 0, 入度0个数: zeroInit.length, 图上剩余: alive.size },
   }
 
   for (const v of zeroInit) queue.push(v)
@@ -1095,70 +1219,114 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 5,
     action: 'mark',
     array: seq,
-    graph: view({ hot: zeroInit, note: `入度为 0 的顶点 ${zeroInit.join('、')} 入队` }),
-    boards: [queueBoard(queue, { hot: zeroInit[0], note: `入度为 0 的顶点入队：队首是 ${queue[0]}` })],
+    graph: topoView({
+      hot: zeroInit,
+      badges: indegBadges(),
+      sub: subOf(Object.fromEntries(zeroInit.map((v) => [v, '入度0']))),
+      note: `入度为 0 的顶点 ${zeroInit.join('、')} 入队`,
+    }),
+    boards: boardPair({ hot: zeroInit[0], note: `入度为 0 的顶点入队：队首是 ${queue[0]}` }),
     comment: `② 入度为 0 的顶点（没有前驱，现在就能做）全部放进队里：${zeroInit.join('、')}。放进**栈或队列都可以**，只影响同层顶点谁先输出，不影响结果的正确性`,
-    vars: { n: N, 输出个数: 0, 入度0个数: queue.length },
+    vars: { n: N, 输出个数: 0, 入度0个数: queue.length, 图上剩余: alive.size },
   }
 
   while (queue.length) {
     const u = queue.shift()!
+    /*
+     * u 的出边表先记下来：下一步会把这个顶点从图上删掉，
+     * 但"它原来指向谁"还要接着用来算后继的入度。
+     */
+    const outs = adj.get(u)!
 
-    // ③ 弹出一个入度 0 的顶点输出
-    out.push(u)
+    // ③ 弹出队首 u 输出 —— 注意这一步它**还在图上**（紫色），下一步才真的被删掉
+    const previewMark = emptyMark()
+    for (const w of outs) previewMark.tone.set(ekey(u, w), 'hot')
     yield {
       line: 8,
       action: 'mark',
       array: seq,
-      graph: view({
+      graph: topoView({
         hot: [u],
-        sub: (i) => (vName(i) === u ? `第${out.length}个` : '入度见表'),
-        note: `输出 ${u}：它是拓扑序列的第 ${out.length} 个顶点`,
+        badges: indegBadges(),
+        sub: subOf({ [u]: `第${out.length + 1}个` }),
+        mark: previewMark,
+        note: outs.length
+          ? `输出 ${u}：它是拓扑序列的第 ${out.length + 1} 个顶点；紫色那 ${outs.length} 条边是它的出边`
+          : `输出 ${u}：它是拓扑序列的第 ${out.length + 1} 个顶点（没有出边）`,
       }),
-      boards: [
-        board({
-          note: `弹出队首 ${u} 输出（队列长 ${queue.length + 1} -> ${queue.length}），它是第 ${out.length} 个`,
-        }),
-      ],
-      comment: `③ 弹出队首 ${u} 输出：它是拓扑序列的第 ${out.length} 个顶点。入度为 0 的意思是"它的前驱全都已经做完了"，所以现在轮到它`,
-      vars: { n: N, 输出个数: out.length, 入度0个数: queue.length },
+      boards: boardPair({
+        note: `弹出队首 ${u} 输出（队列长 ${queue.length + 1} -> ${queue.length}），它马上要从图上被删掉`,
+      }),
+      comment: `③ 弹出队首 ${u} 输出：它是拓扑序列的第 ${out.length + 1} 个顶点。入度为 0 的意思是"它的前驱全都已经做完了"，所以现在轮到它。它**还在图上**（画紫色），下一步才真的消失`,
+      vars: { n: N, 输出个数: out.length, 入度0个数: queue.length, 图上剩余: alive.size },
     }
 
-    // ④ 删掉 u 的所有出边，后继入度减 1
-    const outs = adj.get(u)!
+    /*
+     * ④ 本算法动画最关键的一步：**把 u 这个顶点，和以它为起点的所有出边，一起从图上删掉**。
+     *
+     * 这一步必须是自己独立的一帧 —— 画面从"该顶点还在、正要输出"直接变成
+     * "顶点和它的出边都不见了"，用户才看得清这一步干了什么。
+     * 删完之后，剩下的顶点坐标一点不动（`topoView` 用顶点的原始序号算坐标，不重新布局），
+     * 只是图上少了一个人；同时 u 被写进「已输出」板子，结果不会丢。
+     */
+    out.push(u)
+    alive.delete(u)
+    const outEdgeText = outs.map((w) => `${u}->${w}`).join('、')
+    yield {
+      line: 9,
+      action: 'set',
+      array: seq,
+      graph: topoView({
+        badges: indegBadges(),
+        sub: subOf(),
+        note: outs.length
+          ? `删掉 ${u}：顶点 ${u} 从图上消失，它的 ${outs.length} 条出边（${outEdgeText}）也一起消失`
+          : `删掉 ${u}：它是最后的汇点、没有出边，所以只有顶点 ${u} 自己消失`,
+      }),
+      boards: boardPair({
+        note: outs.length
+          ? `${u} 已经输出到左边那块板子上了；图上从此没有 ${u}，它的 ${outs.length} 条出边也一起删掉了`
+          : `${u} 已经输出到左边那块板子上了；它是最后的汇点，没有出边，所以只有它自己从图上消失`,
+      }),
+      comment: outs.length
+        ? `④ 输出完立刻把 ${u} 从图里删掉：顶点 ${u} 不见了，以它为起点的 ${outs.length} 条出边（${outEdgeText}）也一起不见了 —— 边是跟着起点走的。剩下顶点的坐标一个都没动，只是图上少了一个人。${u} 是拓扑序列的第 ${out.length} 个，已经记在「已输出」板子的最后一格`
+        : `④ 输出完立刻把 ${u} 从图里删掉：它是这张图的汇点，没有出边，所以只有它自己从画面上消失。剩下顶点的坐标一个都没动。${u} 是拓扑序列的第 ${out.length} 个，已经记在「已输出」板子的最后一格`,
+      vars: { n: N, 输出个数: out.length, 入度0个数: queue.length, 图上剩余: alive.size },
+    }
+
+    // ⑤ 边跟着 u 一起删了，箭头指向的后继就少一个前驱：入度减 1，减到 0 就进队
     const newlyZero: string[] = []
     for (let k = 0; k < outs.length; k++) {
       const w = outs[k]!
       /*
-       * 两种边不能删（这张图只从小号指向大号，正常跑下来不会碰到，
+       * 两种边不能再算（这张图只从小号指向大号，正常跑下来不会碰到，
        * 但入度的语义必须是"还欠几个前驱"，所以这两条防线一定要留）：
-       *   1. 指向**已经输出**的顶点：它在输出的时候这条边就已经算删过了；
+       *   1. 指向**已经输出**的顶点：它在输出的时候这条边就跟着一起删掉了；
        *   2. 指向**入度已经归零、已经排队**的顶点：它的入度是靠别的边减到 0 的，
        *      这里再减一次就成 -1 了。
+       * 注意这里**不能**再往 hot 里放 u —— u 已经在上一帧被删掉了，
+       * 引用它会让校验器直接报错。
        */
       if (ready(w) || out.includes(w)) {
         yield {
-          line: 10,
+          line: 12,
           action: 'compare',
           array: seq,
-          graph: view({
-            hot: [u],
-            outDone: [...out],
-            mark: markEdge(u, w, 'dim', out.includes(w) ? '指向已输出' : '已经解锁'),
-            sub: (i) => (vName(i) === u ? '已输出' : '入度见表'),
-            note: `边 ${u}->${w} 不用再删：${w} 的入度已经是 0 了`,
+          graph: topoView({
+            hot: [w],
+            badges: indegBadges(),
+            sub: subOf({ [w]: out.includes(w) ? '已输出' : '已经解锁' }),
+            note: `边 ${u}->${w} 不用再算：${w} 的入度已经是 0 了`,
           }),
-          boards: [
-            board({
-              note: out.includes(w)
-                ? `${w} 已经输出过了，这条边在它输出时就算删掉了，这里跳过`
-                : `${w} 的入度已经减到 0 并在队里了，这条边跳过，不能再减一次`,
-            }),
-          ],
+          boards: boardPair({
+            note: out.includes(w)
+              ? `${w} 已经输出过了，这条边在它输出时就跟着删掉了，这里跳过`
+              : `${w} 的入度已经减到 0 并在队里了，这条边跳过，不能再减一次`,
+          }),
           comment: out.includes(w)
-            ? `④ 边 ${u}->${w} 指向的 ${w} 早就输出过了 —— 它在输出的时候这条边就已经算删掉了（画成灰色虚线），这里跳过，**不能再把 ${w} 的入度减一次**`
-            : `④ 边 ${u}->${w} 指向的 ${w}，它的入度早就被别的边减到 0 了，现在排在队里等输出（画成灰色虚线表示这条边不用再算）—— 入度的意思是"还欠几个前驱没做完"，最少就是 0，**绝不能再减成负数**`,
-          vars: { n: N, 输出个数: out.length, 入度0个数: queue.length },
+            ? `⑤ 边 ${u}->${w} 指向的 ${w} 早就输出过了 —— 它输出的时候这条边就跟着删掉了，这里跳过，**不能再把 ${w} 的入度减一次**`
+            : `⑤ 边 ${u}->${w} 指向的 ${w}，它的入度早就被别的边减到 0 了，现在排在队里等输出 —— 入度的意思是"还欠几个前驱没做完"，最少就是 0，**绝不能再减成负数**`,
+          vars: { n: N, 输出个数: out.length, 入度0个数: queue.length, 图上剩余: alive.size },
         }
         continue
       }
@@ -1166,83 +1334,72 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       const from = indeg.get(w)!
       const to = from - 1
       indeg.set(w, to)
-      removed.add(ekey(u, w))
       if (to === 0) newlyZero.push(w)
 
       yield {
-        line: 10,
+        line: 12,
         action: 'set',
         array: seq,
-        graph: view({
+        graph: topoView({
           hot: [w],
-          outDone: [...out],
-          mark: markEdge(u, w, 'hot', `删第${k + 1}条出边`),
-          sub: (i) =>
-            vName(i) === w ? `入度${from}→${to}` : vName(i) === u ? '已输出' : '入度见表',
-          note: `删掉边 ${u}->${w}：${w} 的入度 ${from} -> ${to}`,
+          badges: indegBadges(),
+          sub: subOf({ [w]: `入度${from}→${to}` }),
+          note: `边 ${u}->${w} 刚才已经跟着 ${u} 一起删掉了：${w} 少一个前驱，入度 ${from} -> ${to}`,
         }),
-        boards: [
-          board({
-            note:
-              to === 0
-                ? `${w} 的入度减到 0 了：它马上要入队`
-                : `${w} 的入度 ${from} -> ${to}，还没到 0，继续等它的其他前驱`,
-          }),
-        ],
-        comment: `④ ${u} 已经输出，它到 ${w} 的这条边（第 ${k + 1} 条出边）就没用了，删掉：${w} 少了一个前驱，入度 ${from} -> ${to}${
+        boards: boardPair({
+          note:
+            to === 0
+              ? `${w} 的入度减到 0 了：它马上要入队`
+              : `${w} 的入度 ${from} -> ${to}，还没到 0，继续等它的其他前驱`,
+        }),
+        comment: `⑤ ${u} 的第 ${k + 1} 条出边 ${u}->${w}（已经跟着 ${u} 一起从图上删掉了）指向 ${w}：${w} 少了一个前驱，入度 ${from} -> ${to}${
           to === 0 ? `。减到 0 说明 ${w} 的前驱都做完了，它可以进队了` : `。还没到 0，${w} 还得等它剩下的前驱`
         }`,
-        vars: { n: N, 输出个数: out.length, 入度0个数: queue.length },
+        vars: { n: N, 输出个数: out.length, 入度0个数: queue.length, 图上剩余: alive.size },
       }
     }
 
     for (const w of newlyZero) queue.push(w)
     yield {
-      line: 10,
+      line: 12,
       action: 'mark',
       array: seq,
-      graph: view({
-        hot: newlyZero.length ? newlyZero : [u],
-        outDone: [...out],
+      graph: topoView({
+        hot: newlyZero,
+        badges: indegBadges(),
+        sub: subOf(Object.fromEntries(newlyZero.map((w) => [w, '入度0']))),
         note: newlyZero.length
           ? `入度减到 0 的顶点 ${newlyZero.join('、')} 进队`
-          : `${u} 的出边都删完了，没有新的入度 0 顶点`,
+          : `${u} 的出边都处理完了，没有新的入度 0 顶点`,
       }),
-      boards: [
-        board({
-          hot: newlyZero[0],
-          note: newlyZero.length
-            ? `${newlyZero.join('、')} 入队：队列现在就 ${queue.length} 个了`
-            : `没有新的入度 0 顶点入队，队列里还有 ${queue.length} 个`,
-        }),
-      ],
+      boards: boardPair({
+        hot: newlyZero[0],
+        note: newlyZero.length
+          ? `${newlyZero.join('、')} 入队：队列现在就 ${queue.length} 个了`
+          : `没有新的入度 0 顶点入队，队列里还有 ${queue.length} 个`,
+      }),
       comment: newlyZero.length
-        ? `④ ${u} 的出边删完，${newlyZero.join('、')} 的入度刚好减到 0，进队等着被输出。这就是拓扑排序的关键动作：**每删一条边，一个顶点的入度就减 1，减到 0 就解锁**`
-        : `④ ${u} 的出边全部删完了，但没有任何顶点因此减到入度 0 —— 它们都还有别的前驱没做完`,
-      vars: { n: N, 输出个数: out.length, 入度0个数: queue.length },
+        ? `⑤ ${u} 的出边删完，${newlyZero.join('、')} 的入度刚好减到 0，进队等着被输出。这就是拓扑排序的关键动作：**每删一条边，一个顶点的入度就减 1，减到 0 就解锁**`
+        : `⑤ ${u} 的出边全部处理完了，但没有任何顶点因此减到入度 0 —— 它们都还有别的前驱没做完`,
+      vars: { n: N, 输出个数: out.length, 入度0个数: queue.length, 图上剩余: alive.size },
     }
   }
 
   const ok = out.length === N
   yield {
-    line: ok ? 14 : 13,
+    line: ok ? 16 : 15,
     action: 'done',
     array: seq,
-    graph: buildView(g, {
-      done: [...out],
-      badges: badges(),
-      used: new Set(removed),
+    graph: topoView({
       // 还没被删掉的边：图有环时它们就是环上的边（画红）；无环时一条也不剩
-      mark: leftEdges(edges, removed),
-      sub: (i) => {
-        const k = out.indexOf(vName(i))
-        return k >= 0 ? `第${k + 1}个` : '未输出'
-      },
+      mark: leftEdges(edges, removedKeys()),
+      sub: subOf({}),
       note: ok
-        ? `拓扑排序成功，序列：${out.join(' → ')}`
+        ? `所有顶点都输出完了，图上剩 ${alive.size} 个顶点、${liveEdgeKeys().size} 条边；拓扑序列：${out.join(' → ')}`
         : `还有 ${N - out.length} 个顶点没输出：图里有环，拓扑排序失败`,
     }),
     boards: [
+      topoOutBoard(out),
       queueBoard([], {
         note: ok
           ? '队列空了，所有顶点都输出了：图是有向无环图'
@@ -1250,9 +1407,9 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       }),
     ],
     comment: ok
-      ? `⑤ 队列空了，而且 ${out.length} 个顶点全都输出了 —— 这是一张有向无环图（DAG），拓扑序列是：${out.join(' → ')}。验证一下：每条边都是从前面的顶点指向后面的顶点，没有一个违反先后次序`
-      : `⑤ 队列空了，但只输出了 ${out.length} 个顶点，还剩 ${N - out.length} 个没输出（图上红色那些边就是环上的边）—— 说明图里有环，这些顶点互相是对方的前驱，谁也不能先做，拓扑排序失败`,
-    vars: { n: N, 输出个数: out.length, 剩余: N - out.length },
+      ? `⑥ 队列空了，而且 ${out.length} 个顶点全都输出了 —— 这是一张有向无环图（DAG），拓扑序列是：${out.join(' → ')}。图上现在一个顶点、一条边都不剩：每输出一个顶点，它本人和它的出边就被一起删掉，删到最后正好清空，全部 ${N} 个顶点都按先后排在图下面的「已输出（拓扑序）」板子里。验证一下：每条边都是从前面的顶点指向后面的顶点，没有一个违反先后次序`
+      : `⑥ 队列空了，但只输出了 ${out.length} 个顶点，还剩 ${N - out.length} 个没输出（图上红色那些边就是环上的边）—— 说明图里有环，这些顶点互相是对方的前驱，谁也不能先做，拓扑排序失败`,
+    vars: { n: N, 输出个数: out.length, 入度0个数: 0, 图上剩余: alive.size },
   }
 }
 
@@ -1354,7 +1511,8 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     name: '拓扑排序（AOV 网）',
     category: 'graph',
     group: '拓扑排序',
-    summary: '反复挑出入度为 0 的顶点输出；每删一条边，后继入度减 1（顶点旁标当前入度）',
+    summary:
+      '反复挑出入度为 0 的顶点输出：每输出一个，该顶点和以它为起点的出边一起从图上消失，后继入度减 1（已输出的排在图下的板子里）',
     complexity: { time: 'O(n + e)，n 是顶点数、e 是边数', space: 'O(n)，入度表和栈 / 队列' },
     renderer: 'graph',
     codeLines: CODE_TOPO,
@@ -1364,12 +1522,21 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     initGraph: (data) =>
       initTopoView(
         data,
-        (g) => `AOV 网（有向无环图）：${g.n} 个顶点、${g.edges.length} 条有向边；从唯一入度为 0 的 V1 开始`,
+        (g) =>
+          `AOV 网（有向无环图）：${g.n} 个顶点、${g.edges.length} 条有向边；每输出一个顶点，它和它的出边都会从画面上删掉`,
       ),
+    // 首帧由 engine 造，生成器管不到：两块板子（已输出 + 队列）必须第一帧就在，
+    // 不然第一帧下方是空的，第 2 帧才冒出来，「已输出」板子也就不是"每帧都有"了
+    initScene: () => ({
+      boards: [
+        topoOutBoard([]),
+        queueBoard([], { note: '初始化：队列是空的，还没找出入度为 0 的顶点' }),
+      ],
+    }),
     initComment: (data) => {
       const g = graphModel(clampN(data.length), true)
       const indegText = g.allV.map((v) => `${v}=${g.initIndeg.get(v)}`).join('、')
-      return `换成一张**有向无环图**（AOV 网）：${g.n} 个顶点、${g.edges.length} 条有向边（主链 V1->…->V${g.n} 打底，再补 4 条跨层边），顶点表示活动，边 u->v 表示 u 必须先于 v。初始入度 ${indegText}，写在每个顶点旁边 —— 中间几个顶点的入度明显比别人大。做法是：把入度为 0 的顶点（没有前驱，现在就能做）放进队里，反复弹出一个输出；每输出一个，就把它所有出边删掉 —— 每删一条边，箭头指向的那个顶点入度减 1，减到 0 就说明它的前驱全做完了，进队等着输出`
+      return `换成一张**有向无环图**（AOV 网）：${g.n} 个顶点、${g.edges.length} 条有向边（主链 V1->…->V${g.n} 打底，再补 4 条跨层边），顶点表示活动，边 u->v 表示 u 必须先于 v。初始入度 ${indegText}，写在每个顶点旁边 —— 中间几个顶点的入度明显比别人大，除最后的汇点外每个顶点都至少有一条出边。做法是：把入度为 0 的顶点（没有前驱，现在就能做）放进队里，反复弹出一个输出；**每输出一个顶点，它本人和以它为起点的所有出边都会从图上真的消失** —— 图上剩下的就是"还没做完的活动"，顶点坐标全程不动。每删掉一条出边，箭头指向的那个顶点入度减 1，减到 0 就说明它的前驱全做完了，进队等着输出。已经输出的顶点按先后排在图下面那块「已输出（拓扑序）」板子里：输出了几个就有几格，一个都没输出时是块空板子`
     },
     createRunner: runTopo,
   },
