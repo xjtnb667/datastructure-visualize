@@ -650,69 +650,96 @@ interface ChildReprRow {
 }
 
 /**
- * 孩子表示法的「顺序表 + 孩子链表」板子。
+ * 孩子表示法的板子 —— 就按教材那张图画：
+ *   **左列**是顺序表，一格一个结点（格里写数据，小字写它在数组里的下标）；
+ *   **右边**从顺序表的格子向右伸出一串箭头，一支箭头连一个"孩子链表结点"，
+ *   链表结点里存的是**孩子在数组里的下标**（小字写出这个下标对应的数据，好和树对上）。
+ *   孩子链表为空的结点：右边第一格写 NULL（就是代码里的 firstchild = NULL），没有箭头。
  *
- * 每行是一个顺序表元素，一行从左到右就是：
- *   第 1 格 = 结点在数组里的下标，第 2 格 = 它的数据，
- *   后面几格 = 它的孩子链表，一格一个链表结点 —— 链表结点里存的是**孩子的下标**
- *   （小字写出这个下标对应的数据，方便和树上的结点对上）。
+ * 格子按行优先摆，cols = 1 + 孩子最多的那个结点的孩子个数，于是：
+ *   第 i 行第 0 格 = 顺序表里下标 i 那一项；
+ *   第 i 行第 1..maxKids 格 = 它的孩子链表结点，从左往右一个接一个。
+ * 箭头（links）只画**真的已经挂上去**的那几根：
+ *   第 0 格 → 第 1 格（顺序表 → 第一个孩子）、第 1 格 → 第 2 格（第一个孩子 → 下一个孩子）……
+ * 所以"建树"的过程在画面上就是箭头一格一格地长出来，叶子结点则一支箭头都没有。
  *
- * 孩子链表为空的结点：第一格写 NULL（就是代码里的 firstchild = NULL），其余留暗格子；
- * 还没建出来的结点：整行都是暗格子（顺序表已经把 n 个位置开好了）。
- * 配色同样用 hot（本步正在动的那一行 / 那一格）、done（已经建好的行）、mark（本步正在读的那一格）。
+ * 配色：hot = 本步正在动的那一格（刚 malloc 出来的链表结点也用它），
+ *       done = 已经建好的行，dim = 顺序表开好了位置但还没建到它 / 链表已经到底的空位。
+ *
+ * 注意：这块板子**不挂 pointers**。
+ * ScenePanel 给"有指针的板子"加了 padding-top: 24px（好让第一行的指针标签不压住标题），
+ * 而画连线的那层 SVG 是按 top: 0 绝对定位的，两者一叠加，箭头会整体上移 24px、
+ * 落在行与行之间的缝里（实测：格子中心在 y=490，箭头却画在 y=461~468，正好是格子的上边缘）。
+ * 孩子链表全靠箭头表达，所以这里宁可不挂指针标签：指针位置改用紫色高亮 + note 文字说清楚。
  */
 function childReprBoard(
   data: number[],
   rows: ChildReprRow[],
   o: {
-    /** 一行几格 = 2 + 孩子最多的那个结点的孩子个数 */
-    cols: number
+    /** 孩子最多的那个结点有几个孩子 —— 顺序表右边就给孩子链表留几格 */
+    maxKids: number
     hotRows?: number[]
     doneRows?: number[]
     /** 本步刚挂到孩子链表上的那一格：[第几行, 它在孩子链表里第几个] */
     hotKid?: [number, number]
-    /** 本步正在读的那一格（红） */
-    markKid?: [number, number]
-    pointers?: Record<string, number>
+    /** 本步 malloc 出来、还没接到链上的那个链表结点：[挂在第几行, 它的 child 值] */
+    pending?: [number, number]
     note: string
   },
 ): BoardView {
-  const { cols } = o
+  const cols = 1 + o.maxKids
   const hot = new Set(o.hotRows ?? [])
   const done = new Set(o.doneRows ?? [])
   const items: CellItem[] = []
+  const links: Array<{ from: number; to: number; dir: 'right' }> = []
 
   rows.forEach((row, i) => {
-    if (!row.exists) {
-      for (let c = 0; c < cols; c++) items.push({ text: '', tone: 'dim' })
-      return
-    }
-    const rowTone: CellTone = hot.has(i) ? 'hot' : done.has(i) ? 'done' : 'base'
-    items.push({ text: String(i), sub: '下标', tone: rowTone })
-    items.push({ text: String(data[i]!), sub: '数据', tone: rowTone })
-    for (let k = 0; k < cols - 2; k++) {
+    // 第 0 格：顺序表里下标 i 那一项。位置是数组一开始就开好的，内容要等建到它才写上去
+    const rowTone: CellTone = !row.exists
+      ? 'dim'
+      : hot.has(i)
+        ? 'hot'
+        : done.has(i)
+          ? 'done'
+          : 'base'
+    items.push({ text: String(data[i]!), sub: `下标 ${i}`, tone: rowTone })
+
+    for (let k = 0; k < o.maxKids; k++) {
       const j = row.kids[k]
+      if (!row.exists) {
+        items.push({ text: '', tone: 'dim' })
+        continue
+      }
+      // 本步刚 malloc 出来的链表结点：先摆在这一格上，箭头要等下一步接上去才画
+      if (j === undefined && o.pending && o.pending[0] === i && k === row.kids.length) {
+        const child = o.pending[1]
+        items.push({ text: String(child), sub: `值${data[child]!}`, tone: 'hot' })
+        continue
+      }
       if (j === undefined) {
-        // 没有孩子：第一格写 NULL（firstchild 空指针），后面的格子本来就该空着
+        // 孩子链表到底了：没有孩子的结点在第一格写 NULL，后面的格子本来就该空着
         items.push(k === 0 ? { text: 'NULL', sub: '无孩子', tone: 'dim' } : { text: '', tone: 'dim' })
         continue
       }
-      const tone: CellTone =
-        o.hotKid && o.hotKid[0] === i && o.hotKid[1] === k
-          ? 'hot'
-          : o.markKid && o.markKid[0] === i && o.markKid[1] === k
-            ? 'mark'
-            : 'base'
-      items.push({ text: String(j), sub: `值${data[j]!}`, tone })
+      items.push({
+        text: String(j),
+        sub: `值${data[j]!}`,
+        tone: o.hotKid && o.hotKid[0] === i && o.hotKid[1] === k ? 'hot' : 'base',
+      })
+    }
+
+    // 箭头：第 0 格 → 第 1 格 → 第 2 格 …… 一条孩子链表一格接一格连到底
+    for (let k = 0; k < row.kids.length && k + 1 <= o.maxKids; k++) {
+      links.push({ from: i * cols + k, to: i * cols + k + 1, dir: 'right' })
     }
   })
 
   return {
-    title: '顺序表 + 孩子链表（每行：下标 / 数据 / 孩子链表结点…）',
+    title: '孩子表示法：顺序表（左列）+ 孩子链表（向右的箭头）',
     layout: 'grid',
     cols,
     items,
-    pointers: o.pointers ?? {},
+    links,
     note: o.note,
   }
 }
@@ -1001,8 +1028,8 @@ const CODE_CHILD = [
 function* runChildRepr(data: number[]): AlgoRunner {
   const n = Math.min(data.length, MAX_NODES)
   const cs = childLists(PARENT_OF, n)
-  /** 一行几格 = 下标 + 数据 + 孩子链表结点（孩子最多的那个结点有几个孩子，就留几格） */
-  const cols = 2 + Math.max(0, ...cs.map((kids) => kids.length))
+  /** 孩子最多的那个结点有几个孩子 —— 顺序表右边就给孩子链表留几格（板子的一行 = 1 + maxKids 格） */
+  const maxKids = Math.max(0, ...cs.map((kids) => kids.length))
   const nodes: TreeNodeSnapshot[] = []
   const byId = new Map<string, TreeNodeSnapshot>()
 
@@ -1014,11 +1041,11 @@ function* runChildRepr(data: number[]): AlgoRunner {
       tree: treeView([]),
       boards: [
         {
-          title: '顺序表 + 孩子链表（空表）',
+          title: '孩子表示法：顺序表（左列）+ 孩子链表（空表）',
           layout: 'grid',
           cols: 1,
           items: [{ text: '空', sub: 'n = 0', tone: 'dim' }],
-          note: '没有数据，顺序表里一行都没有',
+          note: '没有数据，顺序表一格里一个结点都没有，也就没有孩子链表',
         },
       ],
       comment: '数据为空，没有结点可以建树，顺序表也是空的',
@@ -1041,7 +1068,7 @@ function* runChildRepr(data: number[]): AlgoRunner {
   const vals = (): number[] => nodes.map((x) => Number(x.value))
   const vars = () => ({ n, 结点数: nodes.length })
   const snap = (o: ViewOpts = {}): TreeView => treeView(nodes, o)
-  const noteBase = '孩子表示法：每个结点挂一条孩子链表；找孩子 O(1)（顺着链表走），找双亲要遍历所有链表'
+  const noteBase = '孩子表示法：顺序表一格一个结点，每格向右伸出一条孩子链表；找孩子顺着箭头走，找双亲要把所有链表扫一遍'
   /** 顺序表的当前样子：每行建出来了没有、它的孩子链表上挂了哪些（存的是孩子下标） */
   const tableRows = (): ChildReprRow[] =>
     Array.from({ length: n }, (_, i) => {
@@ -1052,14 +1079,20 @@ function* runChildRepr(data: number[]): AlgoRunner {
     hotRows?: number[]
     doneRows?: number[]
     hotKid?: [number, number]
-    markKid?: [number, number]
-    pointers?: Record<string, number>
+    /** 本步刚 malloc 出来、还没接到链上的那个链表结点：[挂在第几行, 它的 child 值] */
+    pending?: [number, number]
     note: string
-  }): BoardView => childReprBoard(data, tableRows(), { cols, ...o })
+  }): BoardView => childReprBoard(data, tableRows(), { maxKids, ...o })
   /** 0..k-1，用来写"前 k 行已经建好了" */
   const upTo = (k: number): number[] => Array.from({ length: k }, (_, x) => x)
-  /** 一条孩子链表读成人话（存的是下标，这里就写下标） */
-  const kidText = (kids: string[]): string => (kids.length ? kids.map((c) => c.slice(1)).join(' → ') : '空（NULL）')
+  /** 一条孩子链表读成人话 —— note 里就要说清"这支箭头指向谁"（存的是下标，这里也写下标） */
+  const chainOf = (i: number): string => {
+    const kids = (byId.get(tid(i))?.children ?? []).map((c) => Number(c.slice(1)))
+    if (!kids.length) return `下标 ${i}（${data[i]}）没有孩子：右边第一格写 NULL，一支箭头都没有`
+    const first = `下标 ${i}（${data[i]}）的第一个孩子是下标 ${kids[0]}`
+    const rest = kids.slice(1).map((k) => `再下一个是下标 ${k}`).join('，')
+    return rest ? `${first}，${rest}` : first
+  }
 
   yield {
     line: 14,
@@ -1069,11 +1102,10 @@ function* runChildRepr(data: number[]): AlgoRunner {
     boards: [
       board({
         hotRows: [0],
-        pointers: { i: 0 },
-        note: `顺序表一共有 ${n} 行（暗色的是还没建出来的结点），每行两格是"下标 / 数据"，后面几格是它的孩子链表。第 0 行先放根结点 ${data[0]}，孩子链表还空着，所以写 NULL`,
+        note: `左列是顺序表：一共 ${n} 格（暗色的是还没建出来的结点），右边给孩子最多的结点留了 ${maxKids} 格。指针 i 先停在下标 0 这一格（紫色）：这里放根结点 ${data[0]}，它还没有孩子，右边第一格就写 NULL —— 空指针，所以没有箭头`,
       }),
     ],
-    comment: `孩子表示法：数组里每个位置存一个结点 + 一条孩子链表（链表结点里存的是孩子的下标）。先把根结点 ${data[0]} 放进第 0 行，它的孩子链表还是空的 —— 就是第一格那个 NULL`,
+    comment: `孩子表示法 = 顺序表（左列）+ 孩子链表（向右伸出的箭头）：顺序表里一格一个结点，每格向右伸出一条链表，把它的孩子串起来，链表结点里存的是孩子在数组里的下标。先把根结点 ${data[0]} 放进下标 0，它还没有孩子，右边第一格就是 NULL`,
     vars: vars(),
   }
 
@@ -1083,6 +1115,8 @@ function* runChildRepr(data: number[]): AlgoRunner {
       const j = Number(child.slice(1))
       const fresh = !byId.has(child)
       ensure(j)
+      const parentNode = byId.get(tid(i))!
+      const before = parentNode.children ?? []
       if (fresh) {
         yield {
           line: 16,
@@ -1093,16 +1127,15 @@ function* runChildRepr(data: number[]): AlgoRunner {
             board({
               hotRows: [j],
               doneRows: upTo(i),
-              pointers: { 新结点: j * cols },
-              note: `① 给孩子 ${data[j]} 造一个孩子链表结点：这个结点里存的是孩子在数组里的下标 ${j}（所以第 ${j} 行也建出来了）。它现在还是个游离结点，没接到谁的孩子链表上`,
+              pending: [i, j],
+              note: `① s->child = ${j}：指针 i 还停在下标 ${i} 那一行，先给孩子 ${data[j]} 造一个孩子链表结点，里面存的就是孩子在数组里的下标 ${j}（紫色那一格）。它现在还没接到下标 ${i} 的孩子链表上，所以这一格还没有箭头指过来；顺手把顺序表里下标 ${j} 那一格也点亮了`,
             }),
           ],
-          comment: `① 给孩子 ${data[j]} 造一个链表结点（下标 ${j}），它现在还没接到任何双亲上`,
+          comment: `① 给孩子 ${data[j]} 申请一个链表结点，把它的下标 ${j} 存进去。它现在还是游离的，没接到谁的孩子链表上 —— 画面上就是紫色那一格，一支箭头都没有`,
           vars: vars(),
         }
       }
-      const parentNode = byId.get(tid(i))!
-      const kids = [...(parentNode.children ?? []), child]
+      const kids = [...before, child]
       parentNode.children = kids
       built += 1
       yield {
@@ -1115,16 +1148,20 @@ function* runChildRepr(data: number[]): AlgoRunner {
             hotRows: [i],
             doneRows: upTo(i),
             hotKid: [i, kids.length - 1],
-            pointers: { i: i * cols },
-            note: `② 把下标 ${j} 这个链表结点挂到下标 ${i} 的孩子链表上（紫色那一格）：现在 ${data[i]} 的孩子链表是 ${kidText(kids)}`,
+            note:
+              kids.length === 1
+                ? `② 指针 i 停在下标 ${i} 这一格（紫色）：这一格就是它的第一个孩子。箭头从现在这一格（左列）向右伸到右边第 1 个孩子链表结点上，终点格里存着孩子下标 ${j}`
+                : `② 箭头从上一个孩子链表结点（下标 ${kids[kids.length - 2]!.slice(1)}）继续向右串到这一格（下标 ${j}，紫色）—— ${chainOf(i)}`,
           }),
         ],
-        comment: `② 把下标 ${j} 挂到下标 ${i} 的孩子链表上：${data[i]} 的孩子有 ${kids.map((c) => data[Number(c.slice(1))]).join('、')}`,
+        comment: `② 把下标 ${j} 接到 ${data[i]}（下标 ${i}）的孩子链表上：${kids.length === 1 ? '这是它的第一个孩子，箭头从顺序表那一格直接指过来' : `这是它第 ${kids.length} 个孩子，箭头从上一个链表结点继续往右串`} —— 现在的走向是 下标 ${i} → ${kids.map((c) => c.slice(1)).join(' → ')}`,
         vars: vars(),
       }
     }
   }
 
+  // 叶子结点（孩子链表空的那些）：右边第一格写 NULL，一支箭头都没有
+  const leafIdx = cs.map((kids, i) => (kids.length ? -1 : i)).filter((i) => i >= 0)
   yield {
     line: 20,
     action: 'done',
@@ -1133,11 +1170,10 @@ function* runChildRepr(data: number[]): AlgoRunner {
     boards: [
       board({
         doneRows: upTo(n),
-        pointers: { 根: 0 },
-        note: `建好了：顺序表 ${n} 行，每行后面跟着自己的孩子链表（链表结点存的是孩子的下标）；没有孩子的行，第一格就是 NULL`,
+        note: `建好了：左列 ${n} 格是顺序表，每格向右伸出的箭头串起自己的孩子链表，终点格里存的是孩子的下标（小字是它的值）。根那一行最热闹：${chainOf(0)}；${leafIdx.length} 个叶子结点（下标 ${leafIdx.join('、')}）右边第一格写 NULL，一支箭头都没有`,
       }),
     ],
-    comment: `建树完成：${n} 个结点一共挂出了 ${built} 个孩子，正好等于边数 n-1；想知道谁是孩子，顺着孩子的链表走就行（O(孩子个数)）`,
+    comment: `建树完成：${n} 个结点一共挂出了 ${built} 个孩子链表结点，正好等于边数 n-1；想知道谁是孩子，顺着那一格的箭头走就行（O(孩子个数)）`,
     vars: vars(),
   }
 
@@ -1153,8 +1189,7 @@ function* runChildRepr(data: number[]): AlgoRunner {
         board({
           hotRows: [target],
           doneRows: upTo(n),
-          pointers: { i: target * cols },
-          note: `要找下标 ${target}（数据 ${data[target]}）的双亲。孩子链表的箭头全是朝下的，没有指向双亲的指针 —— 只能一行一行查过去`,
+          note: `要找下标 ${target}（数据 ${data[target]}）的双亲。箭头全是从顺序表那一格向右指向孩子的，没有一支指回双亲 —— 只能从下标 0 开始一行一行查过去（指针 i 从第 0 行出发）`,
         }),
       ],
       comment: `再来看"找双亲"：找结点 ${data[target]}（下标 ${target}）的双亲 —— 没有向上的指针，只能把所有孩子链表扫一遍`,
@@ -1164,8 +1199,6 @@ function* runChildRepr(data: number[]): AlgoRunner {
       const kids = byId.get(tid(j))?.children ?? []
       const hit = kids.includes(tid(target))
       const kInList = kids.indexOf(tid(target))
-      // 指针 p 顺着这一行的孩子链表走：命中就停在那个结点上，没命中就走到链表末尾（NULL 那一格）
-      const pCol = hit ? 2 + kInList : Math.min(cols - 1, 2 + kids.length)
       const label = kids.length ? kids.map((c) => data[Number(c.slice(1))]).join('、') : '（NULL，没有孩子）'
       yield {
         line: 25,
@@ -1181,11 +1214,10 @@ function* runChildRepr(data: number[]): AlgoRunner {
           board({
             hotRows: hit ? [j, target] : [j],
             doneRows: upTo(n),
-            pointers: { j: j * cols, p: j * cols + pCol },
             ...(hit ? { hotKid: [j, kInList] as [number, number] } : {}),
             note: hit
-              ? `查第 ${j} 行（结点 ${data[j]}）的孩子链表：顺着走到下标 ${target} 那个链表结点（紫色）→ 命中！${data[j]} 就是它的双亲`
-              : `查第 ${j} 行（结点 ${data[j]}）的孩子链表：${label}，没有下标 ${target} → 换下一行`,
+              ? `查第 ${j} 行（指针 j 停在这一行，紫色）：顺着一格一格的箭头往右走，指针 p 走到存着下标 ${target} 的那个链表结点（紫色）—— 命中了！${data[j]} 就是它的双亲`
+              : `查第 ${j} 行（结点 ${data[j]}）：${label}，指针 p 顺着这一行的箭头走到底也没看见下标 ${target} → 换下一行`,
           }),
         ],
         comment: hit
@@ -1208,7 +1240,7 @@ function* runChildRepr(data: number[]): AlgoRunner {
     boards: [
       board({
         doneRows: target > 0 ? [0, target] : [0],
-        note: `顺序表 + 孩子链表全在这儿：找孩子顺着自己那一行的孩子链表走（O(孩子个数)），找双亲却要把 ${n} 行全查一遍（O(n)）`,
+        note: `顺序表（左列）+ 孩子链表（向右的箭头）全在这儿：找孩子顺着自己那一行的箭头走（O(孩子个数)），找双亲却要把 ${n} 行的链表全查一遍（O(n)）`,
       }),
     ],
     comment: `孩子表示法总结：找孩子只要顺着孩子链表走（O(孩子个数)），找双亲却要把 ${n} 条链表全扫一遍（O(n)）`,
