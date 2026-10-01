@@ -25,6 +25,9 @@ import { treeTraverse2Specs } from './treeTraverse2'
 import { treeThreadForestSpecs } from './treeThreadForest'
 import { treeSearchSpecs } from './treeSearch'
 import { treeApplySpecs } from './treeApply'
+import { graphStorageSpecs } from './graphStorage'
+import { graphTraverseSpecs } from './graphTraverse'
+import { graphPathSpecs } from './graphPath'
 
 /**
  * 算法注册表（SRS EF-09 可扩展性）。
@@ -73,6 +76,10 @@ export const algorithmRegistry: AlgorithmSpec[] = [
   ...treeThreadForestSpecs,
   ...treeSearchSpecs,
   ...treeApplySpecs,
+  // 图
+  ...graphStorageSpecs,
+  ...graphTraverseSpecs,
+  ...graphPathSpecs,
 ]
 
 export function getAlgorithm(id: string): AlgorithmSpec {

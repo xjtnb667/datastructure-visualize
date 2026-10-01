@@ -102,6 +102,18 @@ export const CATEGORIES: CategoryMeta[] = [
       { color: '#ef4444', label: '将被删除 / 失衡点' },
     ],
   },
+  {
+    id: 'graph',
+    name: '图',
+    summary: '存储结构、遍历、最小生成树、最短路径、拓扑排序、关键路径',
+    legend: [
+      { color: '#3f6fd8', label: '普通顶点 / 边' },
+      { color: '#8b5cf6', label: '正在访问' },
+      { color: '#f59e0b', label: '当前选中 / 松弛中' },
+      { color: '#10b981', label: '已确定 / 已加入' },
+      { color: '#ef4444', label: '被排除 / 冲突' },
+    ],
+  },
 ]
 
 export function getCategory(id: AlgoCategoryId): CategoryMeta {

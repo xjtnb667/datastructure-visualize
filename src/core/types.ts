@@ -5,7 +5,7 @@
 export type StepAction = 'init' | 'mark' | 'compare' | 'swap' | 'set' | 'sorted' | 'done'
 
 /** 可视化形式：决定右侧用哪个渲染器 */
-export type RendererKind = 'array' | 'seqlist' | 'linked' | 'scene' | 'tree'
+export type RendererKind = 'array' | 'seqlist' | 'linked' | 'scene' | 'tree' | 'graph'
 
 /** 格子 / 结点的配色语义 */
 export type CellTone = 'base' | 'hot' | 'done' | 'mark' | 'dim'
@@ -151,6 +151,53 @@ export interface TreeView {
   note?: string
 }
 
+/** 图的一个顶点快照 */
+export interface GraphNodeSnapshot {
+  id: string
+  /** 顶点上显示的文字（V1、A、v0…） */
+  label: string
+  /**
+   * **相对坐标**，取值 0..1，渲染器按面板尺寸换算成像素。
+   * 图的布局本来就是任意的，所以由算法自己给一个好看的坐标（画在圆上、分层等），
+   * 不需要渲染器去算 —— 这样顶点位置在整个算法过程中保持稳定，动画才好读。
+   */
+  x: number
+  y: number
+  /** 顶点下方的小字 */
+  sub?: string
+}
+
+/** 图的一条边快照 */
+export interface GraphEdgeSnapshot {
+  from: string
+  to: string
+  /** 权值（最小生成树、最短路、关键路径都要标在边上） */
+  w?: number
+  /** 有向边（十字链表、拓扑排序、关键路径用） */
+  directed?: boolean
+  /** 这条边当前的状态：正在看 / 已选中 / 已排除… */
+  tone?: CellTone
+  /** 边上额外标注的文字（松弛后的 dist 等） */
+  label?: string
+}
+
+/** 图类算法的结构快照 */
+export interface GraphView {
+  nodes: GraphNodeSnapshot[]
+  edges: GraphEdgeSnapshot[]
+  /** 本步重点高亮的顶点 */
+  hot?: string[]
+  /** 已经处理完的顶点（绿色） */
+  done?: string[]
+  /**
+   * 顶点旁边的小标签：顶点 id -> 文字。
+   * 像 Dijkstra 的 dist、拓扑排序的入度、关键路径的 ve/vl，都挂在这里。
+   */
+  badges?: Record<string, string>
+  /** 画面下方一句提示 */
+  note?: string
+}
+
 export interface AlgoStep {
   /** 该步骤对应的源码行号，1-based，必须落在 codeLines 范围内 */
   line: number
@@ -175,6 +222,8 @@ export interface AlgoStep {
   list?: ListView
   /** 树 / 二叉树类算法的结构快照 */
   tree?: TreeView
+  /** 图类算法的结构快照 */
+  graph?: GraphView
   /**
    * 通用场景板（栈 / 队列 / 矩阵类算法用）。
    * 一次可以摆好几块 —— 比如对称矩阵要同时显示原矩阵和压缩后的一维表。
@@ -198,7 +247,7 @@ export type AlgoEvent = Pick<AlgoStep, 'line' | 'action' | 'array'> &
   Partial<
     Pick<
       AlgoStep,
-      'indices' | 'comment' | 'vars' | 'range' | 'list' | 'boards' | 'tapes' | 'tree'
+      'indices' | 'comment' | 'vars' | 'range' | 'list' | 'boards' | 'tapes' | 'tree' | 'graph'
     >
   >
 
@@ -214,6 +263,7 @@ export type AlgoCategoryId =
   | 'matrix'
   | 'string'
   | 'tree'
+  | 'graph'
 
 export interface LegendItem {
   color: string
@@ -294,6 +344,11 @@ export interface AlgorithmSpec {
    * 同 initList / initScene：首帧由 engine 造，不在这里给的话第一帧是空画面。
    */
   initTree?: (data: number[], ctx: RunnerContext) => TreeView
+  /**
+   * 图类算法的**首帧**结构快照。同 initList / initTree，
+   * 首帧由 engine 造，不给的话第一帧是空画面。
+   */
+  initGraph?: (data: number[], ctx: RunnerContext) => GraphView
   /**
    * 场景类算法（栈 / 队列 / 矩阵 / 字符串）的首帧画面。
    * 同样是因为首帧由 engine 造，不在这里提供的话第一帧画不出东西。

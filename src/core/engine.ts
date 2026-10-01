@@ -2,6 +2,7 @@ import type {
   AlgorithmSpec,
   AlgoStep,
   BoardView,
+  GraphView,
   ListView,
   RendererKind,
   RunnerContext,
@@ -42,8 +43,19 @@ function cloneBoards(boards: BoardView[]): BoardView[] {
   }))
 }
 
-function cloneTapes(tapes: TapeView[]): TapeView[] {
-  return tapes.map((t) => ({
+/** 图快照也必须深拷贝：不然"上一步"看到的是最后一步那张图 */
+function cloneGraph(gv: GraphView): GraphView {
+  return {
+    nodes: gv.nodes.map((n) => ({ ...n })),
+    edges: gv.edges.map((e) => ({ ...e })),
+    hot: [...(gv.hot ?? [])],
+    done: [...(gv.done ?? [])],
+    badges: { ...(gv.badges ?? {}) },
+    note: gv.note,
+  }
+}
+
+function cloneTapes(tapes: TapeView[]): TapeView[] {  return tapes.map((t) => ({
     label: t.label,
     items: [...t.items],
     pos: t.pos,
@@ -120,6 +132,7 @@ export function buildSteps(
       stats: stats(),
       list: spec.initList ? cloneList(spec.initList(seed, ctx)) : undefined,
       tree: spec.initTree ? cloneTree(spec.initTree(seed, ctx)) : undefined,
+      graph: spec.initGraph ? cloneGraph(spec.initGraph(seed, ctx)) : undefined,
       boards: initScene?.boards ? cloneBoards(initScene.boards) : undefined,
       tapes: initScene?.tapes ? cloneTapes(initScene.tapes) : undefined,
     },
@@ -144,6 +157,7 @@ export function buildSteps(
       range: event.range ? ([event.range[0], event.range[1]] as [number, number]) : undefined,
       list: event.list ? cloneList(event.list) : undefined,
       tree: event.tree ? cloneTree(event.tree) : undefined,
+      graph: event.graph ? cloneGraph(event.graph) : undefined,
       boards: event.boards ? cloneBoards(event.boards) : undefined,
       tapes: event.tapes ? cloneTapes(event.tapes) : undefined,
       comment: event.comment ?? '',
@@ -168,6 +182,7 @@ export function buildSteps(
       // 收尾帧要延续上一帧的结构画面，否则场景板子会凭空消失（校验也过不去）
       list: last.list ? cloneList(last.list) : undefined,
       tree: last.tree ? cloneTree(last.tree) : undefined,
+      graph: last.graph ? cloneGraph(last.graph) : undefined,
       boards: last.boards ? cloneBoards(last.boards) : undefined,
       tapes: last.tapes ? cloneTapes(last.tapes) : undefined,
       comment: `执行结束：共比较 ${compares} 次，移动/交换 ${moves} 次`,
@@ -285,6 +300,33 @@ export function validateSteps(
       for (const t of s.tapes ?? []) {
         if (t.pos !== undefined && (t.pos < -1 || t.pos >= t.items.length)) {
           throw new Error(`第 ${i} 步纸带「${t.label}」的游标 ${t.pos} 越界`)
+        }
+      }
+    }
+  }
+
+  if (kind === 'graph') {
+    // 图：顶点 id 唯一；边的两端、高亮、已访问、badges 指向的顶点都必须真实存在。
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]!
+      const gv = s.graph
+      if (!gv) throw new Error(`第 ${i} 步缺少图结构快照`)
+      const ids = new Set(gv.nodes.map((n) => n.id))
+      if (ids.size !== gv.nodes.length) throw new Error(`第 ${i} 步有重复的顶点 id`)
+      const check = (id: string, what: string) => {
+        if (!ids.has(id)) throw new Error(`第 ${i} 步的${what}指向了不存在的顶点 ${id}`)
+      }
+      for (const e of gv.edges) {
+        check(e.from, '边起点')
+        check(e.to, '边终点')
+      }
+      for (const id of gv.hot ?? []) check(id, '高亮顶点')
+      for (const id of gv.done ?? []) check(id, '已访问顶点')
+      for (const id of Object.keys(gv.badges ?? {})) check(id, 'badge 顶点')
+      // 坐标必须是 0..1 的相对值，不然画出来会跑到面板外面
+      for (const n of gv.nodes) {
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y) || n.x < 0 || n.x > 1 || n.y < 0 || n.y > 1) {
+          throw new Error(`第 ${i} 步顶点 ${n.id} 的坐标 (${n.x}, ${n.y}) 不在 0..1 之间`)
         }
       }
     }
