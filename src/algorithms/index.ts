@@ -21,6 +21,10 @@ import { queueSpecs } from './queue'
 import { matrixSpecs } from './matrix'
 import { stringMatchSpecs } from './stringMatch'
 import { treeSpecs } from './treeTraverse'
+import { treeTraverse2Specs } from './treeTraverse2'
+import { treeThreadForestSpecs } from './treeThreadForest'
+import { treeSearchSpecs } from './treeSearch'
+import { treeApplySpecs } from './treeApply'
 
 /**
  * 算法注册表（SRS EF-09 可扩展性）。
@@ -65,6 +69,10 @@ export const algorithmRegistry: AlgorithmSpec[] = [
   ...stringMatchSpecs,
   // 树与二叉树
   ...treeSpecs,
+  ...treeTraverse2Specs,
+  ...treeThreadForestSpecs,
+  ...treeSearchSpecs,
+  ...treeApplySpecs,
 ]
 
 export function getAlgorithm(id: string): AlgorithmSpec {

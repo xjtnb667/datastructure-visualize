@@ -37,6 +37,37 @@ function childrenOf(n: TreeNodeSnapshot): string[] {
   return out
 }
 
+/**
+ * 实际的父子关系表。
+ *
+ * 关键点：如果整棵树只给了 `parent`（双亲表示法、并查集就是这么存的），
+ * 就**从 parent 反推孩子**。否则这些结点会被当成一堆互不相连的孤立结点，
+ * 全挤在同一行、虚线横穿而过，完全看不出层次。
+ */
+const childMap = computed(() => {
+  const t = tv.value
+  const m = new Map<string, string[]>()
+  if (!t) return m
+  const hasExplicit = t.nodes.some((n) => childrenOf(n).length > 0)
+  for (const n of t.nodes) {
+    m.set(n.id, hasExplicit ? childrenOf(n).filter((c) => t.nodes.some((x) => x.id === c)) : [])
+  }
+  if (!hasExplicit) {
+    for (const n of t.nodes) {
+      if (n.parent) m.get(n.parent)?.push(n.id)
+    }
+  }
+  return m
+})
+
+/** 只靠 parent 连起来的结点对（不画实线，交给 parent 虚线） */
+const parentPairs = computed(() => {
+  const t = tv.value
+  const s = new Set<string>()
+  for (const l of t?.links ?? []) if (l.kind === 'parent') s.add(`${l.from}>${l.to}`)
+  return s
+})
+
 interface Placed {
   node: TreeNodeSnapshot
   /** 格子坐标（第几列 / 第几层） */
@@ -57,7 +88,7 @@ const placed = computed<Placed[]>(() => {
     if (seen.has(id) || !byId.has(id)) return
     seen.add(id)
     depth.set(id, d)
-    for (const c of childrenOf(byId.get(id)!)) walkDepth(c, d + 1)
+    for (const c of childMap.value.get(id) ?? []) walkDepth(c, d + 1)
   }
   for (const r of roots) walkDepth(r, 0)
   // 从根走不到的游离结点也画出来（比如还没挂上去的新结点），统一放最上层
@@ -86,7 +117,7 @@ const placed = computed<Placed[]>(() => {
     const post = (id: string): void => {
       const n = byId.get(id)
       if (!n) return
-      const cs = childrenOf(n).filter((c) => byId.has(c))
+      const cs = childMap.value.get(id) ?? []
       if (!cs.length) {
         gx.set(id, cursor++)
         return
@@ -123,9 +154,11 @@ const pos = computed(() => {
 const edges = computed(() => {
   const out: Array<{ key: string; x1: number; y1: number; x2: number; y2: number }> = []
   for (const p of placed.value) {
-    for (const c of childrenOf(p.node)) {
+    for (const c of childMap.value.get(p.node.id) ?? []) {
       const q = pos.value.get(c)
       if (!q) continue
+      // 这条关系如果已经由 parent 虚线表达，就不再画实线（否则两条线重叠）
+      if (parentPairs.value.has(`${p.node.id}>${c}`)) continue
       out.push({
         key: `${p.node.id}>${c}`,
         x1: px(p) + NODE_W / 2,
