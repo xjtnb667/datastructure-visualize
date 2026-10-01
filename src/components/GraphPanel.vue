@@ -248,6 +248,7 @@ const badges = computed(() => {
         v-for="b in badges"
         :key="`b-${b.id}`"
         class="gbadge"
+        :title="b.text"
         :style="{ transform: `translate(${b.x}px, ${b.y}px)` }"
       >{{ b.text }}</div>
     </div>
@@ -347,6 +348,14 @@ const badges = computed(() => {
   pointer-events: none;
   will-change: transform;
   transition: transform var(--anim, 300ms) cubic-bezier(0.33, 1, 0.68, 1);
+  /*
+   * 长标签（比如 Floyd 挂在顶点上的"整行距离"）会一路横穿到隔壁顶点上。
+   * 顶点在圆环上相邻约 97px，标签从顶点中心往右 23px 处开始，
+   * 所以限到 68px 就不会压到下一个顶点；超出部分省略号，鼠标悬停看全文。
+   */
+  max-width: 68px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .boards-slot {
