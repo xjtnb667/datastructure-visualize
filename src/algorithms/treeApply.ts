@@ -159,18 +159,38 @@ function hufView(
   forest: string[],
   opts: { hot?: string[]; done?: string[]; pointers?: Record<string, string | null>; note?: string } = {},
 ): TreeView {
+  /*
+   * 树区域只画**已经合并出来的**树。
+   * 还没参与过合并的游离叶子属于上方那个池子，在下面再画一遍就重复了 ——
+   * 用户的说法是"先将每个结点单独摆在上方成一行，而后在其下方不断构建树"，
+   * 所以下面从空开始，随合并一棵一棵长出来。
+   */
+  const merged = forest.filter((id) => {
+    const n = tree.nodes.find((x) => x.id === id)
+    return !!n && (!!n.left || !!n.right)
+  })
+  const nodes = liveNodes(tree, merged).map((n) => ({
+    id: n.id,
+    value: n.w,
+    left: n.left ?? null,
+    right: n.right ?? null,
+    sub: subOf(tree, n),
+  }))
+  /*
+   * 指针只保留"树区域里真有这个结点"的那些。
+   * a / b 指的是本轮选中的两棵最小树，如果它们还是游离叶子，树区域里就没有它们
+   * （它们在上方池子里高亮着）—— 这时候指向不存在的结点会被校验器直接报错。
+   */
+  const ids = new Set(nodes.map((n) => n.id))
+  const pointers = Object.fromEntries(
+    Object.entries(opts.pointers ?? {}).filter(([, v]) => !v || ids.has(v)),
+  )
   return {
-    nodes: liveNodes(tree, forest).map((n) => ({
-      id: n.id,
-      value: n.w,
-      left: n.left ?? null,
-      right: n.right ?? null,
-      sub: subOf(tree, n),
-    })),
-    roots: forest.length ? [...forest] : tree.root ? [tree.root] : [],
+    nodes,
+    roots: merged.length ? [...merged] : tree.root ? [tree.root] : [],
     hot: opts.hot ?? [],
     done: opts.done ?? [],
-    pointers: opts.pointers ?? {},
+    pointers,
     links: [],
     note: opts.note,
   }
@@ -1467,7 +1487,9 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     codeLines: CODE_HUF_BUILD,
     defaultData: () => HUF_SAMPLE.slice(),
     // 数据规模 = **叶子个数**：选 7 就是 7 个权值、画面上 7 个结点（不是 2n-1 个）
-    sizes: [5, 6, 7, 8, 9, 10, 11, 12],
+    // 数据规模 = 叶子个数。N 个权值必然长成 2N-1 个结点的满二叉树，
+    // 10 个以上就会密到 2/3 缩放也放不下一个画面，所以上限收到 9。
+    sizes: [5, 6, 7, 8, 9],
     initComment: (data) =>
       `初始权值（对应字符 A~${charOf(data.length - 1)}）：[${data.join(', ')}]。每个权值先各成一棵只有根结点的树，摆在上面的是"游离结点池"，彼此之间还没有任何连线`,
     initTree: (data) => {
@@ -1505,7 +1527,9 @@ export const treeApplySpecs: AlgorithmSpec[] = [
     renderer: 'tree',
     codeLines: CODE_HUF_CODE,
     defaultData: () => HUF_SAMPLE.slice(),
-    sizes: [5, 6, 7, 8, 9, 10, 11, 12],
+    // 数据规模 = 叶子个数。N 个权值必然长成 2N-1 个结点的满二叉树，
+    // 10 个以上就会密到 2/3 缩放也放不下一个画面，所以上限收到 9。
+    sizes: [5, 6, 7, 8, 9],
     initComment: (data) =>
       `权值 [${data.join(', ')}] 已经建成一棵哈夫曼树（就画在右边），现在从根往下给每个字符编码：向左记 0、向右记 1`,
     initTree: (data) => hufCodeView(buildHuffman(data.length ? data : HUF_SAMPLE), { hot: [] }),
