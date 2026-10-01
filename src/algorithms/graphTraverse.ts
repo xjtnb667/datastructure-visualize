@@ -16,6 +16,14 @@ import type {
  * 变动的只有颜色、边上的权值和顶点旁边的小标签 —— 这样"哪一步动了什么"才好读。
  * 圆环第 k 个顶点在 (0.5 + 0.42cos, 0.5 + 0.42sin)，半径 0.42 保证坐标严格落在 0..1 内。
  *
+ * 图的规模
+ * --------
+ *   顶点数 n **就是数据规模**（5..9 个），坐标、边表、邻接表全部由 n 确定性生成：
+ *   - 无向图（DFS / BFS）：环 V1-V2-…-Vn-V1 打底（一定连通、没有孤立点）+ ⌊n/2⌋ 条弦；
+ *   - 有向图（拓扑排序）：主链 V1->…->Vn 打底 + 4 条跨层边，只从小号指向大号，天然无环。
+ *   全程不用 Math.random()，所以同一个 n 每次跑出来的图一模一样。
+ *   4 个算法都从 V1 出发；DFS 的邻居一律按顶点编号升序扫，解说词里的顺序才是确定的。
+ *
  * 快照约定
  * --------
  *   - hot  = 本步正在看的顶点（紫色）；
@@ -38,74 +46,52 @@ import type {
  */
 
 /* ------------------------------------------------------------------ */
-/* 一、图的内部表示（邻接表）                                            */
+/* 一、图的规模与模型：顶点数 n = 数据规模（5..9）                        */
 /* ------------------------------------------------------------------ */
 
-/**
- * 一张无向图：9 条边、6 个顶点，`adj` 里的邻居一律**按编号升序**排好 ——
- * 这样"从 V1 出发，邻居按 V2、V3、V4 的顺序依次看"是确定的，解说词才敢把顺序写死。
- */
-const UNDIRECTED_EDGES: Array<[string, number]> = [
-  ['V1-V2', 1],
-  ['V1-V3', 2],
-  ['V1-V4', 3],
-  ['V2-V3', 4],
-  ['V2-V5', 5],
-  ['V3-V4', 6],
-  ['V3-V6', 7],
-  ['V4-V6', 8],
-  ['V5-V6', 9],
-]
+/** 支持的顶点数范围：数据规模 = 图有几个顶点，下拉框只给这几个值 */
+const MIN_N = 5
+const MAX_N = 9
+/** 下拉框里的"数据规模"（也就是顶点数）候选值 */
+const GRAPH_SIZES = [5, 6, 7, 8, 9]
+/** 不看数据、直接开局时用的顶点数 */
+const DEFAULT_N = 7
 
 /**
- * 一张有向无环图（AOV 网）：6 个顶点、8 条有向边。
- * 初始入度 V1=0、V2=2、V3=1、V4=2、V5=2、V6=4，唯一的入度 0 顶点是 V1，
- * 所以拓扑序列是 V1 -> V2 -> V4 -> V3 -> V5 -> V6。
- * 每条有向边都给一个编号 w，删除的时候能在边上指出"删的是第几条"。
+ * 把随机 / 原始数据规整成"n 个顶点编号"：长度 = 顶点数，值 = 顶点编号 V1..Vn。
+ * 幂等 —— 已经规整过的数据再过一遍结果不变，所以首帧和后面每一帧都对得上。
  */
-const DIRECTED_EDGES: Array<[string, number]> = [
-  ['V1->V2', 1],
-  ['V1->V3', 2],
-  ['V1->V4', 3],
-  ['V2->V4', 4],
-  ['V3->V5', 5],
-  ['V3->V6', 6],
-  ['V4->V6', 7],
-  ['V5->V6', 8],
-]
+export function prepareData(raw: number[]): number[] {
+  const n = Math.min(MAX_N, Math.max(MIN_N, raw.length))
+  return Array.from({ length: n }, (_, i) => i + 1)
+}
 
-const N = 6
+/** 生成器内部也只认长度：不管外面递进来多长，一律按 5..9 个顶点画 */
+const clampN = (len: number): number => Math.min(MAX_N, Math.max(MIN_N, len))
 
-/** 顶点显示名一律 V1..V6，id 也用同一个串 —— 边、badge、板子里的文字都靠它对齐 */
+/** 顶点显示名一律 V1..Vn，id 也用同一个串 —— 边、badge、板子里的文字都靠它对齐 */
 const vName = (i: number): string => `V${i + 1}`
-const ALL_V = Array.from({ length: N }, (_, i) => vName(i))
+
+/** 圆环上的一组顶点名，顺序就是编号顺序 */
+const allV = (n: number): string[] => Array.from({ length: n }, (_, i) => vName(i))
 
 /**
  * 顶点坐标：圆环布局。
- * 第 k 个顶点从 12 点方向开始顺时针排，半径 0.42 —— 最近的两个坐标也有 0.234 的间隔**相对坐标**，
- * 面板宽 640px 时约 150px，顶点圆半径 21px，绝不会挤在一起。
+ * 第 k 个顶点从 12 点方向开始顺时针排，半径 0.42 —— 坐标严格落在 0..1 之间。
+ * 最挤的一档 n = 9 时，相邻两个顶点的间距仍有 0.287 的相对距离（面板宽 640px 时约 180px，
+ * 顶点圆半径 21px），相邻顶点绝不会挤在一起。
  */
 const ring = (k: number, n: number): { x: number; y: number } => {
   const t = (2 * Math.PI * k) / n - Math.PI / 2
   return { x: 0.5 + 0.42 * Math.cos(t), y: 0.5 + 0.42 * Math.sin(t) }
 }
 
-/** 圆环上的一组顶点（顺序就是 V1..V6 的编号顺序） */
-function ringNodes(sub?: (i: number) => string | undefined): GraphNodeSnapshot[] {
-  return Array.from({ length: N }, (_, i) => ({
-    id: vName(i),
-    label: vName(i),
-    ...ring(i, N),
-    sub: sub?.(i),
-  }))
-}
-
 /** 邻接表：顶点 -> 它的邻居，一律按编号升序 */
 type Adj = Map<string, string[]>
 
 /** 从边列表建邻接表：无向边两个方向都加，最后按编号升序排好 */
-function makeAdj(edgeStrs: string[], directed: boolean): Adj {
-  const adj: Adj = new Map(ALL_V.map((v) => [v, []]))
+function makeAdj(vertices: string[], edgeStrs: string[], directed: boolean): Adj {
+  const adj: Adj = new Map(vertices.map((v) => [v, []]))
   for (const e of edgeStrs) {
     const [a, b] = e.split(directed ? '->' : '-') as [string, string]
     adj.get(a)!.push(b)
@@ -116,22 +102,82 @@ function makeAdj(edgeStrs: string[], directed: boolean): Adj {
   return adj
 }
 
-/** 两张图各自用到的边字符串（顺序就是渲染顺序） */
-const UN_EDGES = UNDIRECTED_EDGES.map(([e]) => e)
-const TPO_EDGES = DIRECTED_EDGES.map(([e]) => e)
+/**
+ * 无向连通图的边表：n 个顶点、n + ⌊n/2⌋ 条边。
+ *   ① 先连成一个环 V1-V2-…-Vn-V1：每个顶点的度至少是 2，一定连通、不会出现孤立点；
+ *   ② 再补 ⌊n/2⌋ 条弦（Vi - V(i+2)，隔一个顶点连一条），图里有回路可绕，遍历演示才有的可看。
+ * n = 6 时正好 9 条边 —— 和原来那张固定图规模一致。
+ */
+function undirectedEdges(n: number): string[] {
+  const out: string[] = []
+  for (let i = 1; i <= n; i++) out.push(`${vName(i - 1)}-${vName(i % n)}`)
+  for (let i = 1; i <= Math.floor(n / 2); i++) out.push(`${vName(i - 1)}-${vName(i + 1)}`)
+  return out
+}
 
-const UN_ADJ = makeAdj(UN_EDGES, false)
-const TPO_ADJ = makeAdj(TPO_EDGES, true)
+/**
+ * 有向无环图（AOV 网）的边表：n 个顶点、n + 3 条有向边。
+ *   ① 主链 V1->V2->…->Vn：V1 是唯一入度为 0 的源点，Vn 的入度一定大于 0；
+ *   ② 再补 4 条"跨层"边，只从小号指向大号，所以**天然无环**：
+ *      V1->V3、V2->V4、V1->V4 让 V3 / V4 的前驱明显比别人多，
+ *      V(n-2)->Vn 让汇点有两个前驱 —— 中间顶点的入度有大有小，演示才有看头。
+ */
+function directedEdges(n: number): string[] {
+  const out: string[] = []
+  for (let i = 1; i < n; i++) out.push(`${vName(i - 1)}->${vName(i)}`)
+  out.push(`${vName(0)}->${vName(2)}`)
+  out.push(`${vName(1)}->${vName(3)}`)
+  out.push(`${vName(0)}->${vName(3)}`)
+  out.push(`${vName(n - 3)}->${vName(n - 1)}`)
+  return out
+}
 
-/** 有向图的初始入度：initGraph 造首帧就要用，所以在注册表之前先算好 */
-const TPO_INIT_INDEG: Map<string, number> = (() => {
-  const m = new Map<string, number>(ALL_V.map((v) => [v, 0]))
-  for (const e of TPO_EDGES) {
-    const [, to] = e.split('->') as [string, string]
-    m.set(to, (m.get(to) ?? 0) + 1)
+/** 边表的长度就是边数：解说词里要报"几个顶点几条边" */
+const edgeCount = (n: number, directed: boolean): number =>
+  (directed ? directedEdges(n) : undirectedEdges(n)).length
+
+/**
+ * 一张图的完整模型：顶点数一定，顶点坐标、边表、邻接表、初始入度就跟着一定。
+ * 两种图的生成规则里**没有随机数**，所以同一个 n 每次跑出来的画面完全一样。
+ */
+interface GraphModel {
+  /** 顶点数（= 数据规模） */
+  n: number
+  directed: boolean
+  /** 顶点名 V1..Vn */
+  allV: string[]
+  /** 边字符串（顺序就是渲染顺序，也决定边上 w 的编号） */
+  edges: string[]
+  /** 邻接表：邻居**一律按编号升序** —— "从 V1 出发按 V2、V3… 的顺序看邻居"才是确定的 */
+  adj: Adj
+  /** 初始入度（有向图用；无向图里全是 0，没人看） */
+  initIndeg: Map<string, number>
+  /** 顶点快照：坐标全程固定，只有下方小字 sub 随步骤变 */
+  nodes: (sub?: (i: number) => string | undefined) => GraphNodeSnapshot[]
+}
+
+/** 按顶点数造一张图（无向 or 有向），生成过程完全确定性 */
+function graphModel(n: number, directed: boolean): GraphModel {
+  const vertices = allV(n)
+  const edges = directed ? directedEdges(n) : undirectedEdges(n)
+  const adj = makeAdj(vertices, edges, directed)
+  const initIndeg = new Map<string, number>(vertices.map((v) => [v, 0]))
+  if (directed) {
+    for (const e of edges) {
+      const to = e.split('->')[1]!
+      initIndeg.set(to, (initIndeg.get(to) ?? 0) + 1)
+    }
   }
-  return m
-})()
+  return {
+    n,
+    directed,
+    allV: vertices,
+    edges,
+    adj,
+    initIndeg,
+    nodes: (sub) => vertices.map((v, i) => ({ id: v, label: v, ...ring(i, n), sub: sub?.(i) })),
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* 二、快照构造函数                                                     */
@@ -175,12 +221,14 @@ const ekey = (a: string, b: string): string => `${a}>${b}`
  * 造一张图快照。
  *   - `hot` / `done` 决定顶点颜色（hot 的最终颜色还会被 action 影响）；
  *   - `badges` 只放"有东西可写"的顶点，空字符串会被渲染器跳过；
- *   - 边上的 w 是边的编号（无向图 1..9、有向图 1..8），label 是本步的标注；
+ *   - 边上的 w 是边的编号（无向图 1..n+⌊n/2⌋、有向图 1..n+3），label 是本步的标注；
  *   - 边的配色优先看 `mark`（本步的动作），其次看 `used`（已经走过的边画绿色）。
+ *
+ * 顶点坐标来自模型的 `nodes()`：同一个模型造出来的帧，顶点位置一定一样 ——
+ * "位置不动、只变颜色"这条就靠它保证。
  */
 function buildView(
-  edgeStrs: string[],
-  directed: boolean,
+  g: GraphModel,
   opts: {
     hot?: string[]
     done?: string[]
@@ -193,25 +241,25 @@ function buildView(
   } = {},
 ): GraphView {
   const m = opts.mark ?? emptyMark()
-  const edges: GraphEdgeSnapshot[] = edgeStrs.map((e, k) => {
-    const [a, b] = e.split(directed ? '->' : '-') as [string, string]
+  const edges: GraphEdgeSnapshot[] = g.edges.map((e, k) => {
+    const [a, b] = e.split(g.directed ? '->' : '-') as [string, string]
     const key = ekey(a, b)
     const back = ekey(b, a)
     const markTone = m.tone.get(key) ?? m.tone.get(back)
     return {
       from: a,
       to: b,
-      // 边的编号按"边列表的顺序"给：无向图 1..9、有向图 1..8。
+      // 边的编号按"边列表的顺序"给：无向图 1..n+⌊n/2⌋、有向图 1..n+3。
       // 有一对顶点之间可能既有正向又有反向（无向图的两个方向不都画），
       // 但这里的边列表本身已经去重，所以直接用下标 + 1
       w: k + 1,
-      directed,
+      directed: g.directed,
       tone: markTone ?? (opts.used?.has(key) ? 'done' : undefined),
       label: m.label.get(key) ?? m.label.get(back),
     }
   })
   return {
-    nodes: ringNodes(opts.sub),
+    nodes: g.nodes(opts.sub),
     edges,
     hot: opts.hot ?? [],
     done: opts.done ?? [],
@@ -298,9 +346,11 @@ const CODE_DFS_REC = [
 ]
 
 function* runDfsRec(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
-  const adj = UN_ADJ
-  const edges = UN_EDGES
-  const seq = data.slice()
+  /** 顶点数 = 数据规模（5..9 个顶点）；图的结构完全由它决定，跟随机数无关 */
+  const N = clampN(data.length)
+  const seq = prepareData(data)
+  const g = graphModel(N, false)
+  const { edges, adj } = g
   const visited = new Set<string>()
   const order: string[] = []
   /** 调用栈：frame[0] 是最外层（栈底），最后一个是最内层（栈顶） */
@@ -314,7 +364,7 @@ function* runDfsRec(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
   }
 
   const v = (note: string, hot?: string[], mark?: EdgeMark, sub?: (i: number) => string | undefined) =>
-    buildView(edges, false, {
+    buildView(g, {
       hot: hot ?? [],
       done: [...order],
       badges: badges(),
@@ -327,12 +377,12 @@ function* runDfsRec(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 1,
     action: 'init',
     array: seq,
-    graph: buildView(edges, false, {
+    graph: buildView(g, {
       sub: () => '未访问',
-      note: `无向图，6 个顶点 9 条边；从 V1 出发递归 DFS`,
+      note: `无向图，${N} 个顶点 ${edges.length} 条边；从 V1 出发递归 DFS`,
     }),
     boards: [stackBoard([], { title: '递归调用栈（栈底在下）', note: '还没进任何一层：调用栈是空的' })],
-    comment: `这张无向图有 6 个顶点、9 条边。顶点编号 V1..V6 固定画在圆周上，位置全程不动，变化的只有颜色和边上的小字。DFS 从 V1 出发：一条路走到黑，走不动了再退回来换一条。下面每进一层函数就压一格栈`,
+    comment: `这张无向图有 ${N} 个顶点、${edges.length} 条边（环 V1-V2-…-V${N}-V1 打底，再加 ${Math.floor(N / 2)} 条弦）。顶点编号 V1..V${N} 固定画在圆周上，位置全程不动，变化的只有颜色和边上的小字。DFS 从 V1 出发：一条路走到黑，走不动了再退回来换一条。每到一个顶点，邻居一律**按编号从小到大**挨个看 —— 下面每进一层函数就压一格栈`,
     vars: { n: N, 栈深: 0, 已访问: 0 },
   }
 
@@ -516,7 +566,7 @@ function* runDfsRec(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 12,
     action: 'done',
     array: seq,
-    graph: buildView(edges, false, {
+    graph: buildView(g, {
       done: [...order],
       badges: badges(),
       used: new Set(edges.flatMap((e) => {
@@ -560,9 +610,11 @@ const CODE_DFS_ITER = [
 ]
 
 function* runDfsIter(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
-  const adj = UN_ADJ
-  const edges = UN_EDGES
-  const seq = data.slice()
+  /** 顶点数 = 数据规模（5..9 个顶点）；图的结构完全由它决定，跟随机数无关 */
+  const N = clampN(data.length)
+  const seq = prepareData(data)
+  const g = graphModel(N, false)
+  const { edges, adj } = g
   const visited = new Set<string>()
   const order: string[] = []
   /** 显式栈：栈底在 [0]，栈顶在最后 —— 跟板子第 0 格在最下面是一致的 */
@@ -581,13 +633,13 @@ function* runDfsIter(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     sub?: (i: number) => string | undefined
     note?: string
   }): GraphView =>
-    buildView(edges, false, { ...opts, done: [...order], badges: badges() })
+    buildView(g, { ...opts, done: [...order], badges: badges() })
 
   yield {
     line: 1,
     action: 'init',
     array: seq,
-    graph: buildView(edges, false, { sub: () => '未访问', note: '无向图，从 V1 出发的非递归 DFS' }),
+    graph: buildView(g, { sub: () => '未访问', note: '无向图，从 V1 出发的非递归 DFS' }),
     boards: [stackBoard([], { title: '栈（栈底在下）', note: '初始化：栈还是空的' })],
     comment: `非递归 DFS 用一个**显式栈**模拟递归。做法是：起点先压栈；然后反复"弹出栈顶 -> 弹出来且没访问过就访问 -> 把它所有没访问过的邻居一次性全部压栈"。注意是**弹出时才访问**，不是压栈时就访问，所以同一个顶点可能被压进栈很多次，弹出来发现访问过了就当场丢掉`,
     vars: { n: N, 栈深: 0, 已访问: 0 },
@@ -724,7 +776,7 @@ function* runDfsIter(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 15,
     action: 'done',
     array: seq,
-    graph: buildView(edges, false, {
+    graph: buildView(g, {
       done: [...order],
       badges: badges(),
       used: new Set(edges.flatMap((e) => {
@@ -772,10 +824,15 @@ interface Enq {
 }
 
 function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
-  const edges = UN_EDGES
-  const seq = data.slice()
+  /** 顶点数 = 数据规模（5..9 个顶点），和上面两个 DFS 用的是同一张无向图 */
+  const N = clampN(data.length)
+  const seq = prepareData(data)
+  const g = graphModel(N, false)
+  const { edges, adj } = g
   const visited = new Set<string>()
   const order: string[] = []
+  /** 每个顶点**被访问时**所在的层次，和解说词里的 order 一一对应（收尾帧要报出来） */
+  const levels: number[] = []
   const queue: Enq[] = []
   const start = vName(0)
 
@@ -790,7 +847,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     mark?: EdgeMark
     sub?: (i: number) => string | undefined
     note?: string
-  }): GraphView => buildView(edges, false, { ...opts, done: [...order], badges: badges() })
+  }): GraphView => buildView(g, { ...opts, done: [...order], badges: badges() })
 
   const board = (opts: { hot?: string; note: string }): BoardView =>
     queueBoard(queue.map((e) => e.v), opts)
@@ -799,7 +856,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 1,
     action: 'init',
     array: seq,
-    graph: buildView(edges, false, { sub: () => '未访问', note: '无向图，从 V1 出发的 BFS' }),
+    graph: buildView(g, { sub: () => '未访问', note: '无向图，从 V1 出发的 BFS' }),
     boards: [queueBoard([], { note: '初始化：队列是空的' })],
     comment: `BFS 用一个队列：先进先出。所以顶点是"一层一层"被访问的 —— 离起点 V1 近的全部访问完，才轮到更远的。每个顶点旁边的小标签写的就是它是第几个被访问的`,
     vars: { n: N, 队列长: 0, 已访问: 0 },
@@ -808,6 +865,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
   // ① 起点：先访问、打标记，再入队
   visited.add(start)
   order.push(start)
+  levels.push(0)
   yield {
     line: 3,
     action: 'mark',
@@ -856,7 +914,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       vars: { n: N, 队列长: queue.length, 已访问: order.length, 层: head.level },
     }
 
-    const nb = UN_ADJ.get(u)!
+    const nb = adj.get(u)!
     for (let k = 0; k < nb.length; k++) {
       const w = nb[k]!
 
@@ -881,6 +939,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       visited.add(w)
       order.push(w)
       const lv = head.level + 1
+      levels.push(lv)
       yield {
         line: 11,
         action: 'mark',
@@ -923,7 +982,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 16,
     action: 'done',
     array: seq,
-    graph: buildView(edges, false, {
+    graph: buildView(g, {
       done: [...order],
       badges: badges(),
       used: new Set(edges.flatMap((e) => {
@@ -934,7 +993,7 @@ function* runBfs(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       note: `BFS 结束，访问序列：${order.join(' → ')}`,
     }),
     boards: [queueBoard([], { note: '队列空了，所有顶点的邻居都检查过了' })],
-    comment: `队列空了，BFS 结束。从 V1 出发的访问序列是：${order.join(' → ')}（共 ${order.length} 个顶点）。序列是严格分层的：第 ${order.length} 个顶点的层次依次是 0、1、1、1、2、2 —— 这就是"广度优先"的含义`,
+    comment: `队列空了，BFS 结束。从 V1 出发的访问序列是：${order.join(' → ')}（共 ${order.length} 个顶点）。序列是严格分层的：每个顶点被访问时所在的层次依次是 ${levels.join('、')} —— 同层的全部访问完才轮到下一层，这就是"广度优先"的含义`,
     vars: { n: N, 队列长: 0, 已访问: order.length },
   }
 }
@@ -963,11 +1022,14 @@ const CODE_TOPO = [
 ]
 
 function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
-  const adj = TPO_ADJ
-  const edges = TPO_EDGES
-  const seq = data.slice()
-  /** 每个顶点的**当前**入度：初始 V1=0、V2=2、V3=1、V4=2、V5=2、V6=4，之后每删一条边就减 1 */
-  const indeg = new Map(TPO_INIT_INDEG)
+  /** 顶点数 = 数据规模（5..9 个顶点），有向边只从小号指向大号 */
+  const N = clampN(data.length)
+  const seq = prepareData(data)
+  const g = graphModel(N, true)
+  const { edges, adj } = g
+  const ALL_V = g.allV
+  /** 每个顶点的**当前**入度：初始值由主链 + 4 条跨层边决定（首帧解说里会报出来），之后每删一条边就减 1 */
+  const indeg = new Map(g.initIndeg)
 
   /** 板子上的"入度为 0 的顶点"队列：队首是等下要弹出的那个 */
   const queue: string[] = []
@@ -989,7 +1051,7 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     sub?: (i: number) => string | undefined
     note?: string
   }): GraphView =>
-    buildView(edges, true, {
+    buildView(g, {
       hot: opts.hot ?? [],
       done: opts.outDone ?? [...out],
       badges: badges(),
@@ -1004,9 +1066,10 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
    * 这个顶点的入度是不是**已经归零、并且已经排进队了**（或者已经输出了）。
    *
    * 这是 Kahn 算法里最容易写错的一处：一个顶点可能有多个前驱，
-   * V3 的两个前驱是 V1 和 V2，处理 V1 时 V3 的入度就减到 0 了 ——
-   * 等处理 V2 时**绝不能再减一次**，否则入度会从 0 掉到 -1，
-   * 解说词会写出"入度减到 0"这种自相矛盾的话，排进队还会被输出两次。
+   * 排在前面处理的前驱可能已经把它减到了 0（比如 V4 的前驱有 V1、V2、V3，
+   * 前两个处理完时它的入度就已经是 1 了）—— 等最后一个前驱轮到的时候**绝不能再减一次**，
+   * 否则入度会从 0 掉到 -1，解说词会写出"入度减到 0"这种自相矛盾的话，
+   * 排进队还会被输出两次。
    * 所以入度的语义是"**还欠几个没做完的前驱**"，最少就是 0，不会再往下走。
    */
   const ready = (v: string): boolean => queue.includes(v) || out.includes(v)
@@ -1017,7 +1080,7 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: 2,
     action: 'init',
     array: seq,
-    graph: buildView(edges, true, {
+    graph: buildView(g, {
       badges: badges(),
       sub: () => '入度见表',
       note: 'AOV 网：顶点是活动，有向边 u->v 表示 u 必须先于 v',
@@ -1067,11 +1130,11 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     for (let k = 0; k < outs.length; k++) {
       const w = outs[k]!
       /*
-       * 两种边不能删：
-       *   1. 指向**已经输出**的顶点（比如 V6->V3，V3 早就输出了）；
-       *   2. 指向**入度已经归零、已经排队**的顶点（比如 V3 靠 V1 就解锁了，
-       *      轮到 V2 时 V3 的入度已经是 0，再减就成 -1 了）。
-       * 这两种情况在这条边"另一头"处理的时候就已经算删过了。
+       * 两种边不能删（这张图只从小号指向大号，正常跑下来不会碰到，
+       * 但入度的语义必须是"还欠几个前驱"，所以这两条防线一定要留）：
+       *   1. 指向**已经输出**的顶点：它在输出的时候这条边就已经算删过了；
+       *   2. 指向**入度已经归零、已经排队**的顶点：它的入度是靠别的边减到 0 的，
+       *      这里再减一次就成 -1 了。
        */
       if (ready(w) || out.includes(w)) {
         yield {
@@ -1165,7 +1228,7 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     line: ok ? 14 : 13,
     action: 'done',
     array: seq,
-    graph: buildView(edges, true, {
+    graph: buildView(g, {
       done: [...out],
       badges: badges(),
       used: new Set(removed),
@@ -1197,8 +1260,27 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
 /* 八、注册表                                                          */
 /* ------------------------------------------------------------------ */
 
-/** 4 个算法的输入都是一个"顶点编号串"：图的结构是写死的，它只用来填底部的数据栏 */
-const DEFAULT_DATA = (): number[] => [1, 2, 3, 4, 5, 6]
+/**
+ * 4 个算法的输入都只是一串"顶点编号"：数据**长度 = 顶点数**，值只用来填底部的数据栏。
+ * 默认给 7 个顶点（落在 5..9 的中间，开局就是一张不大不小的图）。
+ */
+const DEFAULT_DATA = (): number[] => Array.from({ length: DEFAULT_N }, (_, i) => i + 1)
+
+/** 遍历类（DFS / BFS）的首帧图：顶点下方一律先写"未访问" */
+function initTraverseView(data: number[], note: (g: GraphModel) => string): GraphView {
+  const g = graphModel(clampN(data.length), false)
+  return buildView(g, { sub: () => '未访问', note: note(g) })
+}
+
+/** 拓扑排序的首帧图：每个顶点旁边先把初始入度写出来 */
+function initTopoView(data: number[], note: (g: GraphModel) => string): GraphView {
+  const g = graphModel(clampN(data.length), true)
+  return buildView(g, {
+    badges: Object.fromEntries(g.allV.map((v) => [v, `入度${g.initIndeg.get(v)}`])),
+    sub: () => '入度见表',
+    note: note(g),
+  })
+}
 
 export const graphTraverseSpecs: AlgorithmSpec[] = [
   {
@@ -1211,20 +1293,20 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     renderer: 'graph',
     codeLines: CODE_DFS_REC,
     defaultData: DEFAULT_DATA,
-    // 图有 6 个顶点：顶点换成"从第几个数据出发"没有意义，所以数据规模只给 6
-    sizes: [6],
-    initGraph: () =>
-      buildView(UN_EDGES, false, {
-        sub: () => '未访问',
-        note: '无向图：6 个顶点、9 条边；从 V1 出发递归 DFS',
-      }),
+    prepareData,
+    // 数据规模 = 顶点数：图按 5..9 个顶点确定性生成，所以只给这五档
+    sizes: GRAPH_SIZES,
+    initGraph: (data) =>
+      initTraverseView(data, (g) => `无向图：${g.n} 个顶点、${g.edges.length} 条边；从 V1 出发递归 DFS`),
     // 首帧由 engine 造，生成器管不到 —— 要让"递归调用栈"从第一帧就出现在页面下方，
     // 只能靠 initScene 把这块空栈板递进去（跟 stackSeq / treeThreadForest 的做法一样）
     initScene: () => ({
       boards: [stackBoard([], { title: '递归调用栈（栈底在下）', note: '还没进任何一层：调用栈是空的' })],
     }),
-    initComment: () =>
-      '无向图有 6 个顶点、9 条边，顶点固定画在圆周上。递归 DFS 从 V1 出发：访问 V1 之后，按编号从小到大看它的邻居，谁没访问过就递归进去 —— 一路往深处走，走到没路可走才一层层退回来。下面那块竖排板子就是**递归调用栈**',
+    initComment: (data) => {
+      const n = clampN(data.length)
+      return `无向图有 ${n} 个顶点、${edgeCount(n, false)} 条边（环 V1-V2-…-V${n}-V1 打底，再加 ${Math.floor(n / 2)} 条弦），顶点编号 V1..V${n} 固定画在圆周上，位置全程不动。递归 DFS 从 V1 出发：访问 V1 之后，按编号从小到大看它的邻居，谁没访问过就递归进去 —— 一路往深处走，走到没路可走才一层层退回来。下面那块竖排板子就是**递归调用栈**`
+    },
     createRunner: runDfsRec,
   },
   {
@@ -1237,12 +1319,10 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     renderer: 'graph',
     codeLines: CODE_DFS_ITER,
     defaultData: DEFAULT_DATA,
-    sizes: [6],
-    initGraph: () =>
-      buildView(UN_EDGES, false, {
-        sub: () => '未访问',
-        note: '无向图：6 个顶点、9 条边；从 V1 出发非递归 DFS',
-      }),
+    prepareData,
+    sizes: GRAPH_SIZES,
+    initGraph: (data) =>
+      initTraverseView(data, (g) => `无向图：${g.n} 个顶点、${g.edges.length} 条边；从 V1 出发非递归 DFS`),
     // 同上：显式栈板子要第一帧就在
     initScene: () => ({ boards: [stackBoard([], { note: '初始化：栈还是空的' })] }),
     initComment: () =>
@@ -1259,12 +1339,10 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     renderer: 'graph',
     codeLines: CODE_BFS,
     defaultData: DEFAULT_DATA,
-    sizes: [6],
-    initGraph: () =>
-      buildView(UN_EDGES, false, {
-        sub: () => '未访问',
-        note: '无向图：6 个顶点、9 条边；从 V1 出发 BFS',
-      }),
+    prepareData,
+    sizes: GRAPH_SIZES,
+    initGraph: (data) =>
+      initTraverseView(data, (g) => `无向图：${g.n} 个顶点、${g.edges.length} 条边；从 V1 出发 BFS`),
     // 同上：队列板子要第一帧就在
     initScene: () => ({ boards: [queueBoard([], { note: '初始化：队列是空的' })] }),
     initComment: () =>
@@ -1281,15 +1359,18 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     renderer: 'graph',
     codeLines: CODE_TOPO,
     defaultData: DEFAULT_DATA,
-    sizes: [6],
-    initGraph: () =>
-      buildView(TPO_EDGES, true, {
-        badges: Object.fromEntries(ALL_V.map((v) => [v, `入度${TPO_INIT_INDEG.get(v)}`])),
-        sub: () => '入度见表',
-        note: 'AOV 网（有向无环图）：6 个顶点、8 条有向边；从唯一入度为 0 的 V1 开始',
-      }),
-    initComment: () =>
-      '换成一张**有向无环图**（AOV 网）：6 个顶点、8 条有向边，顶点表示活动，边 u->v 表示 u 必须先于 v。初始入度 V1=0、V2=2、V3=1、V4=2、V5=2、V6=4，写在每个顶点旁边。做法是：把入度为 0 的顶点（没有前驱，现在就能做）放进队里，反复弹出一个输出；每输出一个，就把它所有出边删掉 —— 每删一条边，箭头指向的那个顶点入度减 1，减到 0 就说明它的前驱全做完了，进队等着输出',
+    prepareData,
+    sizes: GRAPH_SIZES,
+    initGraph: (data) =>
+      initTopoView(
+        data,
+        (g) => `AOV 网（有向无环图）：${g.n} 个顶点、${g.edges.length} 条有向边；从唯一入度为 0 的 V1 开始`,
+      ),
+    initComment: (data) => {
+      const g = graphModel(clampN(data.length), true)
+      const indegText = g.allV.map((v) => `${v}=${g.initIndeg.get(v)}`).join('、')
+      return `换成一张**有向无环图**（AOV 网）：${g.n} 个顶点、${g.edges.length} 条有向边（主链 V1->…->V${g.n} 打底，再补 4 条跨层边），顶点表示活动，边 u->v 表示 u 必须先于 v。初始入度 ${indegText}，写在每个顶点旁边 —— 中间几个顶点的入度明显比别人大。做法是：把入度为 0 的顶点（没有前驱，现在就能做）放进队里，反复弹出一个输出；每输出一个，就把它所有出边删掉 —— 每删一条边，箭头指向的那个顶点入度减 1，减到 0 就说明它的前驱全做完了，进队等着输出`
+    },
     createRunner: runTopo,
   },
 ]
