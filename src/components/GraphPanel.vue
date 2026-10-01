@@ -92,10 +92,21 @@ function toneColor(t: CellTone | undefined): RGB {
   }
 }
 
+/**
+ * 权值标签的避让。
+ *
+ * 图的边中点经常重合 —— 正六边形里 V1-V4 / V2-V5 / V3-V6 三条对角线的中点
+ * 全都在圆心，标签直接画就会叠成一团。所以先从边中点往两边依次挪（t 从 0.5
+ * 往外试），挪到没有别的标签挨着为止。
+ */
+const TS = [0.5, 0.36, 0.64, 0.27, 0.73, 0.19, 0.81, 0.12, 0.88]
+const LABEL_MIN_DIST = 30
+
 const drawnEdges = computed<DrawnEdge[]>(() => {
   const g = gv.value
   if (!g) return []
   const out: DrawnEdge[] = []
+  const placed: Array<{ x: number; y: number }> = []
   g.edges.forEach((e, i) => {
     const a = posOf.value.get(e.from)
     const b = posOf.value.get(e.to)
@@ -119,6 +130,29 @@ const drawnEdges = computed<DrawnEdge[]>(() => {
     const hl = 13
     const bx = x2 - ux * hl
     const by = y2 - uy * hl
+    // 标签：先垂直偏移 11px，再沿边找一个不撞车的位置
+    const nx = dy / len
+    const ny = -dx / len
+    let lx = 0
+    let ly = 0
+    let ok = false
+    for (const t of TS) {
+      const mx = x1 + (x2 - x1) * t
+      const my = y1 + (y2 - y1) * t
+      const cx = mx + nx * 11
+      const cy = my + ny * 11
+      if (!placed.some((p) => Math.hypot(p.x - cx, p.y - cy) < LABEL_MIN_DIST)) {
+        lx = cx
+        ly = cy
+        ok = true
+        break
+      }
+    }
+    if (!ok) {
+      lx = (x1 + x2) / 2 + nx * 11
+      ly = (y1 + y2) / 2 + ny * 11
+    }
+    placed.push({ x: lx, y: ly })
     out.push({
       key: `${e.from}>${e.to}#${i}`,
       x1,
@@ -130,8 +164,8 @@ const drawnEdges = computed<DrawnEdge[]>(() => {
       hot: e.tone === 'hot',
       w: e.w,
       label: e.label,
-      lx: (x1 + x2) / 2 + (dy / len) * 11,
-      ly: (y1 + y2) / 2 - (dx / len) * 11,
+      lx,
+      ly,
       dashed: e.tone === 'dim',
     })
   })
