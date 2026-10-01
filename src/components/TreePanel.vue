@@ -310,18 +310,18 @@ const pointerLabels = computed(() => {
   padding: 10px 0;
 }
 
-/* 树下面的栈 / 队列板子：最多占 42% 高度，自己内部滚动 */
+/* 树下面的栈 / 队列 / 存储结构板子：按内容高度自适应，最多占 70% 再内部滚动 */
 .boards-slot {
   flex: 0 0 auto;
-  max-height: 42%;
+  max-height: 70%;
   overflow: auto;
   border-top: 1px solid #232a35;
-  padding-top: 6px;
 }
 
 .boards-slot :deep(.scene) {
   height: auto;
   padding-top: 6px;
+  padding-bottom: 2px;
 }
 
 .board {

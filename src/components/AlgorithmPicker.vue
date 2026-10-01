@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { CATEGORIES } from '@/core/categories'
@@ -16,16 +16,42 @@ const shownCategory = ref<AlgoCategoryId>(algorithm.value.category)
 const locked = ref(false)
 
 const rootEl = ref<HTMLDivElement | null>(null)
+/** 右列（算法列表）—— 打开时要把它滚到"当前算法"那一行居中 */
+const algosEl = ref<HTMLElement | null>(null)
 
 /** 按子类分组；没有 group 的算法会合成一个空标题的组，模板里跳过标题即可 */
 const groups = computed(() => getGroupedByCategory(shownCategory.value))
 
+/**
+ * 把右列滚到"当前选中的算法"那一行，并让它落在**列表中间**。
+ * 大类有十几个算法时，不滚动的话当前算法常常在可视区外面，一眼看不到自己在哪。
+ */
+async function centerCurrent(): Promise<void> {
+  // 两次对齐：面板刚展开时右列高度还在算（第一次量到的位置会偏一两行），
+  // 等一帧再量一次才准。
+  const align = (): void => {
+    const el = algosEl.value
+    if (!el) return
+    const item = el.querySelector('.algo-item.on') as HTMLElement | null
+    if (!item) return
+    const er = el.getBoundingClientRect()
+    const ir = item.getBoundingClientRect()
+    const delta = ir.top + ir.height / 2 - (er.top + er.height / 2)
+    el.scrollTop = Math.max(0, el.scrollTop + delta)
+  }
+  await nextTick()
+  align()
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  align()
+}
+
 function toggle(): void {
   open.value = !open.value
-  if (open.value && !locked.value) {
+  if (open.value) {
     // 没锁定时：每次打开回到"当前算法所属大类"，鼠标一放上去就能预览。
     // 已锁定时：保持原样 —— 关掉再打开还是那一列，直到手动解锁为止。
-    shownCategory.value = algorithm.value.category
+    if (!locked.value) shownCategory.value = algorithm.value.category
+    void centerCurrent()
   }
 }
 
@@ -62,6 +88,11 @@ function choose(id: string): void {
   store.selectAlgorithm(id)
   close()
 }
+
+// 左列切到"当前算法所属大类"时，也把右列滚到当前算法居中
+watch(shownCategory, () => {
+  if (open.value && shownCategory.value === algorithm.value.category) void centerCurrent()
+})
 
 function onDocPointerDown(event: PointerEvent): void {
   if (!open.value) return
@@ -113,7 +144,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 第二列：该大类下的算法（按子类分组） -->
-      <div class="algos">
+      <div ref="algosEl" class="algos">
         <template v-for="g in groups" :key="g.group || '_'">
           <p v-if="g.group" class="group-title">{{ g.group }}</p>
           <ul class="algo-list">
