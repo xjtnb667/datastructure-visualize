@@ -155,6 +155,20 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    /*
+     * 5xx 而且响应体**不是我们后端的 JSON 信封** —— 说明这个响应根本不是后端发的。
+     * 最常见的情况：Vite 的开发代理连不上后端（后端没启动 / 已退出），
+     * 于是它自己回一个 HTML 或纯文本的 500。
+     *
+     * 这时候如果只说"服务器内部错误"，用户会以为程序坏了，根本想不到是"后端没开" ——
+     * 实际排查中确实发生过（用户只跑了 npm run dev，只起了前端）。所以要直接说清怎么办。
+     */
+    if (res.status >= 500 && !env) {
+      throw new ApiError(
+        res.status,
+        '后端服务没有启动（或已经退出）。请关掉这个窗口，重新双击项目目录下的「启动项目.bat」—— 它会同时启动后端和前端。',
+      )
+    }
     const message = (env?.error ?? '').trim() || STATUS_TEXT[res.status] || `请求失败（${res.status}）`
     if (res.status === 401 && token) setToken(null)
     throw new ApiError(res.status, message)
