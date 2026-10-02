@@ -206,3 +206,72 @@ test('退出登录后原令牌立刻失效', async () => {
   assert.equal(after.status, 401)
   assert.equal(after.error, '登录状态已失效，请重新登录')
 })
+
+test('改密码会作废其它设备的会话：当前设备保留、另一台失效；只改昵称则不影响', async () => {
+  const STALE = '登录状态已失效，请重新登录'
+
+  // ---- 同一账号在两台"设备"上登录，拿到两个不同的令牌 ----
+  const account = await ctx.register({ password: 'origin123', nickname: '双设备' })
+  const deviceA = account.token // register() 内部登录了一次，就当设备 A
+  const deviceB = (await ctx.login(account.username, 'origin123')).token
+  assert.notEqual(deviceA, deviceB, '同一个账号登录两次必须拿到两个不同的令牌')
+  assert.equal((await ctx.api('GET', '/api/auth/me', { token: deviceA })).status, 200)
+  assert.equal((await ctx.api('GET', '/api/auth/me', { token: deviceB })).status, 200)
+  assert.equal(
+    Number(ctx.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(account.user.id).n),
+    2,
+    '改密码之前：两台设备各有一个有效会话',
+  )
+
+  // ---- 设备 A 改密码 ----
+  const changed = await ctx.api('PATCH', '/api/auth/me', {
+    token: deviceA,
+    body: { oldPassword: 'origin123', newPassword: 'changed456' },
+  })
+  assert.equal(changed.status, 200)
+  assert.equal(changed.ok, true)
+
+  // 设备 A（本次请求用的令牌）必须还能用 —— 不能把用户自己踢下线
+  const stillA = await ctx.api('GET', '/api/auth/me', { token: deviceA })
+  assert.equal(stillA.status, 200, '改密码的那台设备应当保持登录')
+  assert.equal(stillA.data.username, account.username)
+
+  // 设备 B（其它设备）的旧令牌必须立刻失效
+  const goneB = await ctx.api('GET', '/api/auth/me', { token: deviceB })
+  assert.equal(goneB.status, 401, '改完密码，其它设备的旧令牌必须失效')
+  assert.equal(goneB.error, STALE)
+  assert.equal(
+    Number(ctx.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(account.user.id).n),
+    1,
+    '改完密码只应剩下当前这一条会话',
+  )
+
+  // 密码本身也确实换了：旧密码登不上、新密码能登上
+  const oldLogin = await ctx.api('POST', '/api/auth/login', {
+    body: { username: account.username, password: 'origin123' },
+  })
+  assert.equal(oldLogin.status, 401)
+  assert.equal(oldLogin.error, '用户名或密码错误')
+  const newLogin = await ctx.api('POST', '/api/auth/login', {
+    body: { username: account.username, password: 'changed456' },
+  })
+  assert.equal(newLogin.status, 200, '新密码必须能重新登录')
+
+  // ---- 对照：只改昵称（不改密码）时，其它设备的令牌不受影响 ----
+  const other = await ctx.register({ password: 'origin123', nickname: '只改昵称' })
+  const otherA = other.token
+  const otherB = (await ctx.login(other.username, 'origin123')).token
+
+  const renamed = await ctx.api('PATCH', '/api/auth/me', { token: otherA, body: { nickname: '改过昵称' } })
+  assert.equal(renamed.status, 200)
+  assert.equal(renamed.data.nickname, '改过昵称')
+
+  const otherBAfter = await ctx.api('GET', '/api/auth/me', { token: otherB })
+  assert.equal(otherBAfter.status, 200, '只改昵称不该清掉别的设备（不是"一改资料就全清"）')
+  assert.equal(otherBAfter.data.nickname, '改过昵称', 'B 看到的应当是刚改好的昵称，说明还是同一个账号')
+  assert.equal(
+    Number(ctx.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(other.user.id).n),
+    2,
+    '只改昵称时两个会话都应当留着',
+  )
+})

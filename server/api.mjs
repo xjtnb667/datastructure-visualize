@@ -127,7 +127,7 @@ function authMe({ user }) {
   return publicUser(user)
 }
 
-function authUpdateMe({ user, body }) {
+function authUpdateMe({ req, user, body }) {
   const patch = {}
   if (body.nickname !== undefined) patch.nickname = assertNickname(body.nickname)
 
@@ -149,6 +149,15 @@ function authUpdateMe({ user, body }) {
 
   const sets = Object.keys(patch).map((k) => `${k} = ?`).join(', ')
   db.prepare(`UPDATE users SET ${sets} WHERE id = ?`).run(...Object.values(patch), user.id)
+
+  // 改完密码，把该用户在**其它设备**上的会话全部作废 —— 当前这个保留，
+  // 否则用户自己会被自己的操作踢下线，体验反而奇怪。
+  // （只是改昵称的时候不清会话：那不算"凭据变了"。管理员重置密码走 adminUpdateUser，
+  //  那边连自己在用的会话一起清，因为他重置的本来就不是自己。）
+  if (patch.password_hash !== undefined) {
+    const currentToken = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '').trim()
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(user.id, currentToken)
+  }
   return findUser(user.id)
 }
 
