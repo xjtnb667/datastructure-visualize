@@ -271,6 +271,7 @@ export type AlgoCategoryId =
   | 'string'
   | 'tree'
   | 'graph'
+  | 'dp'
 
 export interface LegendItem {
   color: string

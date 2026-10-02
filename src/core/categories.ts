@@ -6,7 +6,8 @@ import type { AlgoCategoryId, CategoryMeta } from './types'
  *
  * 数组顺序 = 选择器左列从上到下的显示顺序，也决定"上一个 / 下一个算法"这类
  * 按大类遍历的行为。所以这里按教材的章节顺序排：
- * 线性表 → 栈 → 队列 → 数组 → 串 → 树与二叉树 → 图 → 查找 → 排序。
+ * 线性表 → 栈 → 队列 → 数组 → 串 → 树与二叉树 → 图 → 动态规划 → 查找 → 排序。
+ * （动态规划是"算法设计方法"这一章，排在数据结构之后、查找排序之前。）
  * 注意 CATEGORIES[0] 是 getCategory() 找不到时的兜底项，改动顺序会改变兜底结果。
  */
 export const CATEGORIES: CategoryMeta[] = [
@@ -93,6 +94,18 @@ export const CATEGORIES: CategoryMeta[] = [
       { color: '#f59e0b', label: '当前选中 / 松弛中' },
       { color: '#10b981', label: '已确定 / 已加入' },
       { color: '#ef4444', label: '被排除 / 冲突' },
+    ],
+  },
+  {
+    id: 'dp',
+    name: '动态规划',
+    summary: '把大问题拆成重叠子问题，用一张表把中间结果存下来',
+    legend: [
+      { color: '#3f6fd8', label: 'dp 表的值格子' },
+      { color: '#8b5cf6', label: '正在算这一格' },
+      { color: '#ef4444', label: '这一步用到的来源格子' },
+      { color: '#10b981', label: '已经算好 / 选中的物品' },
+      { color: '#2b323c', label: '还没算到的格子' },
     ],
   },
   {

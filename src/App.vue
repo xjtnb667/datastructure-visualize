@@ -13,11 +13,14 @@ import AlgorithmNav from '@/components/AlgorithmNav.vue'
 import AlgorithmPicker from '@/components/AlgorithmPicker.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import AuthDialog from '@/components/AuthDialog.vue'
+import DataInputDialog from '@/components/DataInputDialog.vue'
+import NotesPanel from '@/components/NotesPanel.vue'
 import FavoritesView from '@/views/FavoritesView.vue'
 import HomeView from '@/views/HomeView.vue'
+import ReportView from '@/views/ReportView.vue'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { useUserStore, difficultyText } from '@/stores/user'
-import { normalizeHash, useRoute } from '@/router'
+import { normalizeHash, navigate, useRoute } from '@/router'
 import type { StepAction } from '@/core/types'
 import logoUrl from '@/assets/logo.png'
 
@@ -37,6 +40,8 @@ const { algorithm, currentAction, currentComment, currentVars, currentStats, isS
   storeToRefs(store)
 
 const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null)
+/** 「手动输入数据」弹窗（顶栏那个 ✏️ 按钮打开它） */
+const dataDialog = ref<InstanceType<typeof DataInputDialog> | null>(null)
 /** 收藏失败时的提醒（比如后端没启动）。只在"点不动"的时候出现，2.6 秒后自己消失 */
 const notice = ref('')
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -150,8 +155,30 @@ onBeforeUnmount(() => {
         <button class="btn ghost" :disabled="algorithm.useFixedInput" @click="store.randomize()">
           🎲 随机数据
         </button>
+        <!--
+          手动输入数据：点开弹窗自己敲一串数字（5,2,9,1,7,3）。
+          输入是**固定串**的算法（括号匹配 / 表达式求值）用不上，直接禁用并说明原因 ——
+          禁用比"点了没反应"清楚。title 写在按钮上，鼠标一停就能看到为什么。
+        -->
+        <button
+          class="btn ghost"
+          :disabled="algorithm.useFixedInput"
+          :title="
+            algorithm.useFixedInput
+              ? `「${algorithm.name}」的输入是固定的，不能用自定义数据`
+              : '自己输入一串数字（2~12 个整数，用逗号或空格分开）'
+          "
+          @click="dataDialog?.open()"
+        >
+          ✏️ 手动输入
+        </button>
         <button class="btn ghost" @click="store.restoreDefault()">示例数据</button>
       </div>
+
+      <!-- 「我的学习报告」入口：顶栏右侧、用户区左边，和收藏一样是"我的"这类功能 -->
+      <button class="btn ghost report-btn" title="我的学习报告" @click="navigate('/report')">
+        📊<span class="report-btn-text"> 学习报告</span>
+      </button>
 
       <UserMenu />
     </header>
@@ -161,6 +188,9 @@ onBeforeUnmount(() => {
 
     <!-- 学习记录 / 收藏 -->
     <FavoritesView v-else-if="route === 'favorites'" />
+
+    <!-- 我的学习报告：把学习记录画成图（环形覆盖率 + 条形分布 + Top 10） -->
+    <ReportView v-else-if="route === 'report'" />
 
     <!-- 管理员后台：按需加载，只有切到 #/admin 才会去取这段代码 -->
     <AdminView v-else-if="route === 'admin'" />
@@ -217,6 +247,20 @@ onBeforeUnmount(() => {
         </section>
       </main>
 
+      <!--
+        学习笔记：整行排在"代码 / 动画"两块面板下面、步骤控制条上面。
+        为什么放这里：
+          - 笔记是**跟着当前算法**的（`:algo-key` 传的就是上面两块面板里那个算法），
+            放在它们正下方，眼睛不用来回找；
+          - 它是**整行**的，所以左栏 40% / 右栏 60% 的既有分栏一点没动 ——
+            塞进左栏会挤掉代码、塞进右栏会挤掉动画（动画才是主角）；
+          - 面板只有一个 `algoKey` 属性、登录框内嵌在它自己里面，挂上就能用，
+            父组件不需要额外接线（未登录时它自己显示"登录 / 注册"并弹窗）。
+      -->
+      <div class="notes-wrap">
+        <NotesPanel :algo-key="algorithm.id" />
+      </div>
+
       <footer class="bottom">
         <div class="explain">
           <div class="explain-body">
@@ -250,5 +294,8 @@ onBeforeUnmount(() => {
 
     <!-- 登录 / 注册弹窗（点收藏星标、点顶栏都能打开它） -->
     <AuthDialog ref="authDialog" />
+
+    <!-- 「手动输入数据」弹窗（顶栏那个 ✏️ 按钮打开它） -->
+    <DataInputDialog ref="dataDialog" />
   </div>
 </template>

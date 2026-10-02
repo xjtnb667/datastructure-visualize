@@ -95,7 +95,7 @@ test('游客可以读公开算法列表（该放行的也放行了）', async ()
   assert.equal(res.status, 200)
   assert.equal(res.ok, true)
   assert.ok(Array.isArray(res.data))
-  assert.equal(res.data.length, 98, '种子算法元数据是 98 条')
+  assert.equal(res.data.length, 101, '种子算法元数据是 101 条')
   assert.deepEqual(Object.keys(res.data[0]).includes('algo_key'), true)
 })
 

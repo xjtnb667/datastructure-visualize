@@ -206,7 +206,7 @@ async function main() {
   console.log(`  接口地址   http://${app.host}:${app.port}/api`)
   console.log(`  数据文件   ${DB_PATH}`)
   console.log(
-    `  算法元数据 ${seededAlgorithms > 0 ? `首次初始化，已写入 ${seededAlgorithms} 条算法` : '沿用已有数据'}`,
+    `  算法元数据 ${seededAlgorithms > 0 ? `本次补齐 ${seededAlgorithms} 条新算法` : '已是最新，无需补齐'}`,
   )
   if (app.createdAdmin) console.log(`  管理员账号 已创建：${ADMIN_USERNAME} / ${ADMIN_PASSWORD}（请登录后尽快改密码）`)
   if (HAS_DIST) {

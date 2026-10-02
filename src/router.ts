@@ -13,13 +13,14 @@ import { ref, watch, type Ref } from 'vue'
  *   #/            首页（落地页：大字标题 + 进入学习的按钮）
  *   #/learn       算法学习界面（算法可视化主界面）
  *   #/favorites   我的收藏 + 学习记录
+ *   #/report      我的学习报告（把学习记录画成图）
  *   #/admin       管理员后台
  *
  * ⚠️ `#/` 曾经就是算法学习界面，加了首页之后它让给了首页，
  * 算法界面搬到 `#/learn`。所以**旧地址 `#/` 不再直接进算法界面**。
  */
 
-export type RouteName = 'home' | 'learn' | 'favorites' | 'admin'
+export type RouteName = 'home' | 'learn' | 'favorites' | 'report' | 'admin'
 
 /**
  * 地址 -> 路由名。带了别的东西（比如 `#/favorites?x=1`）也照样认得出来。
@@ -29,6 +30,7 @@ export function routeNameFromHash(hash: string): RouteName {
   const path = hash.replace(/^#/, '').replace(/^\/*/, '/').split('?')[0]!.replace(/\/+$/, '')
   if (path === '/learn') return 'learn'
   if (path === '/favorites') return 'favorites'
+  if (path === '/report') return 'report'
   if (path === '/admin') return 'admin'
   return 'home'
 }
@@ -38,6 +40,7 @@ export const ROUTE_PATHS: Record<RouteName, string> = {
   home: '/',
   learn: '/learn',
   favorites: '/favorites',
+  report: '/report',
   admin: '/admin',
 }
 
@@ -64,6 +67,7 @@ const TITLES: Record<RouteName, string> = {
   home: '算法可视化平台',
   learn: '算法学习 · 算法可视化平台',
   favorites: '我的收藏与学习记录 · 算法可视化平台',
+  report: '学习报告 · 算法可视化平台',
   admin: '后台管理 · 算法可视化平台',
 }
 

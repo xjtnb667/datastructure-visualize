@@ -18,7 +18,7 @@ after(async () => {
 
 /**
  * 新增一个临时算法，跑完自动删掉。
- * 这样"算法总数 = 98"这类断言不会因为别的用例留下垃圾数据而受影响（不依赖执行顺序）。
+ * 这样"算法总数 = 101"这类断言不会因为别的用例留下垃圾数据而受影响（不依赖执行顺序）。
  */
 async function withAlgorithm(fields, fn) {
   const created = await ctx.api('POST', '/api/admin/algorithms', { token: ctx.adminToken, body: fields })
@@ -30,10 +30,10 @@ async function withAlgorithm(fields, fn) {
   }
 }
 
-test('概览统计：算法数 = 种子 98，用户数与收藏数按增量对得上', async () => {
+test('概览统计：算法数 = 种子 101，用户数与收藏数按增量对得上', async () => {
   const before = await ctx.api('GET', '/api/admin/stats', { token: ctx.adminToken })
   assert.equal(before.status, 200)
-  assert.equal(before.data.algorithms, 98, '算法元数据种子一共 98 条')
+  assert.equal(before.data.algorithms, 101, '算法元数据种子一共 101 条')
   assert.ok(before.data.users >= 1, '至少有种子管理员 admin')
   assert.ok(Number.isInteger(before.data.todayUsers))
 
@@ -44,7 +44,7 @@ test('概览统计：算法数 = 种子 98，用户数与收藏数按增量对�
   const now = await ctx.api('GET', '/api/admin/stats', { token: ctx.adminToken })
   assert.equal(now.data.users, before.data.users + 1, '多注册 1 个人，用户数应当 +1')
   assert.equal(now.data.favorites, before.data.favorites + 2, '多收藏 2 条，收藏数应当 +2')
-  assert.equal(now.data.algorithms, 98, '统计里不能把用户/收藏算进算法数')
+  assert.equal(now.data.algorithms, 101, '统计里不能把用户/收藏算进算法数')
   assert.ok(now.data.todayUsers >= 1, '今天至少注册了刚才这个人')
 })
 
@@ -112,13 +112,27 @@ test('新增算法成功：中文大类归一化成 id，字段都按传入值�
   )
 })
 
-test('新增算法：英文大类 id 直接可用，非法大类返回 400', async () => {
+test('新增算法：英文大类 id 直接可用（含动态规划 dp），非法大类返回 400', async () => {
   await withAlgorithm(
     { algo_key: uniqueName('en-'), name: '英文大类算法', category: 'tree' },
     async (algo) => {
       assert.equal(algo.category, 'tree')
       assert.equal(algo.difficulty, 2, '不传难度默认 2')
       assert.equal(algo.online, 1, '不传上架默认上架')
+    },
+  )
+
+  // 动态规划是后加的大类：白名单里少一个 dp，管理员就没法在后台新增 / 修改这类算法（400）
+  await withAlgorithm(
+    { algo_key: uniqueName('dp-'), name: '动态规划类算法', category: 'dp' },
+    async (algo) => {
+      assert.equal(algo.category, 'dp', '英文 id "dp" 必须被放行')
+    },
+  )
+  await withAlgorithm(
+    { algo_key: uniqueName('dp-cn-'), name: '动态规划类算法（中文大类）', category: '动态规划' },
+    async (algo) => {
+      assert.equal(algo.category, 'dp', '中文大类"动态规划"应当归一化成 id "dp"')
     },
   )
 
@@ -129,6 +143,7 @@ test('新增算法：英文大类 id 直接可用，非法大类返回 400', asy
   assert.equal(bad.status, 400)
   assert.match(bad.error, /大类只能是：/, '提示语要列出允许的大类')
   assert.match(bad.error, /排序/)
+  assert.match(bad.error, /动态规划/, '提示语要跟着白名单一起更新，列出"动态规划"')
 })
 
 test('新增算法：algo_key 重复返回 409', async () => {
@@ -205,7 +220,7 @@ test('删除算法成功，再删返回 404；关联的收藏会被一起清掉'
   const rows = ctx.db.prepare('SELECT COUNT(*) AS n FROM favorites WHERE algo_key = ?').get(algoKey)
   assert.equal(Number(rows.n), 0, '算法删了，指向它的收藏也应当清掉')
   const stats = await ctx.api('GET', '/api/admin/stats', { token: ctx.adminToken })
-  assert.equal(stats.data.algorithms, 98, '删干净之后算法总数回到 98')
+  assert.equal(stats.data.algorithms, 101, '删干净之后算法总数回到 101')
 })
 
 test('算法列表：搜索（algo_key / 名称）与分页都能用', async () => {
@@ -226,14 +241,14 @@ test('算法列表：搜索（algo_key / 名称）与分页都能用', async () 
 
   const page1 = await ctx.api('GET', '/api/admin/algorithms?page=1&size=10', { token: ctx.adminToken })
   const page2 = await ctx.api('GET', '/api/admin/algorithms?page=2&size=10', { token: ctx.adminToken })
-  assert.equal(page1.data.total, 98)
+  assert.equal(page1.data.total, 101)
   assert.equal(page1.data.items.length, 10)
   assert.equal(page2.data.items.length, 10)
   const ids = new Set([...page1.data.items, ...page2.data.items].map((a) => a.id))
   assert.equal(ids.size, 20, '两页之间不能重复')
 
-  const lastPage = await ctx.api('GET', '/api/admin/algorithms?page=10&size=10', { token: ctx.adminToken })
-  assert.equal(lastPage.data.items.length, 8, '98 条 = 9 页满 + 最后一页 8 条')
+  const lastPage = await ctx.api('GET', '/api/admin/algorithms?page=11&size=10', { token: ctx.adminToken })
+  assert.equal(lastPage.data.items.length, 1, '101 条 = 10 页满 + 最后一页 1 条')
 })
 
 test('管理员编辑用户时 id 不存在返回 404', async () => {

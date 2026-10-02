@@ -710,3 +710,77 @@ body {
 .app:has(> .home) {
   gap: 0;
 }
+
+/* ---------- 「学习报告」入口（顶栏右上角，用户区左边） ---------- */
+/*
+ * 它和顶栏其它按钮长一样（.btn.ghost），只多两条：
+ *   1. 左边留一点距离，和「数据规模 / 随机数据」那组操作分开，免得看成同一组；
+ *   2. 窄屏（见下面的 media query）只留 📊 那个图标，免得顶栏换行换得太狠。
+ */
+.report-btn {
+  margin-left: 4px;
+  padding: 7px 13px;
+  font-size: 13px;
+  flex: none;
+}
+
+/* ---------- 窄屏 ---------- */
+/*
+ * 顶栏的元素本来就允许换行（.topbar 是 flex-wrap），这一条只是让它在很窄的时候
+ * 换得更体面：报告入口收成只有图标 + 顶栏内边距收窄，别让"学习报告"四个字把
+ * 随机数据 / 手动输入那一整组挤到第三行去。
+ */
+@media (max-width: 720px) {
+  .report-btn {
+    padding: 7px 10px;
+  }
+
+  .report-btn-text {
+    display: none;
+  }
+
+  .topbar {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .pickers {
+    gap: 8px;
+  }
+}
+
+/* ==========================================================================
+ * 算法界面（`#/learn`）· 学习笔记区
+ * `components/NotesPanel.vue` 自己带了一套深色样式（面板 #12161d / 边框 #232a35 /
+ * 蓝 #3f6fd8），所以这里**只**做三件"把它挂进既有布局"的事：
+ *   1. 它整行排在 `.stage`（代码 + 动画）和 `.bottom`（步骤控制条）之间，
+ *      宽度天然是整行 —— 左边 40% / 右边 60% 的既有分栏因此一点没动；
+ *   2. 兜住动画区的下限：窗口矮的时候，笔记区不能把代码 / 动画挤没，
+ *      所以给 `.stage` 一个最小高度，放不下时**整页滚动**，而不是把面板压扁；
+ *   3. 内嵌时把多行输入收矮一点（默认 96px 起、最多 34vh），笔记区就不会太长。
+ * `:has()` 在本项目里已经在用（见上面 `.app:has(> .home)`），浏览器要求一致。
+ * ========================================================================== */
+.notes-wrap {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 有笔记区时，代码 / 动画两块面板至少留 300px —— 不够就让页面滚动 */
+.app:has(> .notes-wrap) > .stage {
+  min-height: 300px;
+}
+
+/* 选择器比 NotesPanel 的 scoped 样式（`.notes-input[data-v-x]`）多一层，稳赢 */
+.notes-wrap .notes-body .notes-input {
+  min-height: 96px;
+  max-height: 34vh;
+}
+
+/* 窄屏：代码 / 动画本来就是上下两行，笔记区再放高就更挤了 */
+@media (max-width: 1080px) {
+  .notes-wrap .notes-body .notes-input {
+    min-height: 84px;
+    max-height: 26vh;
+  }
+}

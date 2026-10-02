@@ -93,6 +93,22 @@ db.exec(`
     updated_at   INTEGER NOT NULL,
     PRIMARY KEY (user_id, algo_key)
   );
+
+  -- 学习笔记：用户对某个算法写的自己的理解 / 易错点。
+  -- 一个用户对一个算法**只有一条**（写第二次就是更新），所以主键是 (user_id, algo_key)。
+  -- 与收藏 / 学习记录一样按 algo_key 关联（后端不认识算法代码，只认这个标识）。
+  --
+  -- 这张表是**新增**的，用 CREATE TABLE IF NOT EXISTS 建：
+  -- 新库建它、老库也建它（老库里原本没有这张表），重复启动多少次都一样，
+  -- 不删表、不重建、不动已有的 5 张表 —— 于是用户数据一条都不会丢。
+  CREATE TABLE IF NOT EXISTS notes (
+    user_id    INTEGER NOT NULL,
+    algo_key   TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, algo_key)
+  );
 `)
 
 // ---------------------------------------------------------------------------
@@ -126,9 +142,15 @@ export const addedAvatarColumn = ensureColumn('users', 'avatar', 'TEXT')
 // 算法元数据种子
 //
 // 后端不重复维护算法清单的"来源"，但后端是 .mjs、前端注册表是 .ts，运行时读不到，
-// 所以这里内置一份**一次性快照**：大类（前端 AlgoCategoryId）/ 子类（界面上的小标题）/
-// id（= 前端注册表里的 id）/ 名称 / 难度 / 一句话简介，一共 98 条，顺序 = 前端注册顺序。
-// 前端注册表以后再加算法，管理员在后台"新增算法"即可，不用改这里的代码。
+// 所以这里内置一份**快照**：大类（前端 AlgoCategoryId）/ 子类（界面上的小标题）/
+// id（= 前端注册表里的 id）/ 名称 / 难度 / 一句话简介，一共 101 条，顺序 = 前端注册顺序。
+// 难度按"1 入门 / 2 中等 / 3 较难"标注（动态规划那三条都是 3）；简介与前端注册表里
+// 每个算法的 `summary` 一字不差，直接从 `src/algorithms/*.ts` 抄过来。
+//
+// ⚠️ 这个数组的**顺序很重要**：它是 `sort_order` 的唯一来源（下标即 sort_order），
+// 必须和 `src/algorithms/index.ts` 里 `algorithmRegistry` 的登记顺序一致 ——
+// 大类顺序是 线性表 / 栈 / 队列 / 数组与矩阵 / 串 / 树与二叉树 / 图 / **动态规划** / 查找 / 排序。
+// 往注册表里加算法时，这里补一条（详见下面 seedAlgorithms 的注释）。
 // ---------------------------------------------------------------------------
 const SEED_ALGORITHMS = [
   // 顺序表（4）
@@ -277,6 +299,15 @@ const SEED_ALGORITHMS = [
   ['graph', '关键路径', [
     ['graph-critical-path', '关键路径（AOE 网）', 3, '按拓扑序求 ve、逆拓扑序求 vl，e == l 的活动就是关键活动'],
   ]],
+  // 动态规划 · 背包问题（1）
+  ['dp', '背包问题', [
+    ['dp-knapsack', '0-1 背包', 3, 'dp[i][j] = max(不选第 i 件, 选第 i 件) 两个来源取大，最后回推出选了哪些物品'],
+  ]],
+  // 动态规划 · 双串模型（2）
+  ['dp', '双串模型', [
+    ['dp-lcs', '最长公共子序列', 3, '字符相等就斜着接上（左上角 + 1），不相等就取"上"和"左"里大的那个'],
+    ['dp-edit-distance', '编辑距离', 3, '删除 / 插入 / 替换各对应一个来源格子，取最小的那个再加 1'],
+  ]],
   // 线性表的查找（3）
   ['search', '线性表的查找', [
     ['sequential-search', '顺序查找', 1, '从头到尾一个一个比对'],
@@ -342,23 +373,42 @@ const SEED_ALGORITHMS = [
   ]],
 ]
 
-/** 建表之后写入算法元数据（只在表是空的时候写一次） */
+/**
+ * 写入 / 补齐算法元数据。**幂等**，每次启动都跑一遍，返回"这次新插入了几条"。
+ *
+ * 三条规矩（都是为了"用户已经在用的那个库"不能丢东西）：
+ *   1. **只补缺的，绝不覆盖**：`INSERT ... ON CONFLICT(algo_key) DO NOTHING`，
+ *      一条一条按 `algo_key` 补。所以管理员在后台改过的名称 / 大类 / 子类 / 难度 /
+ *      简介 / 上架状态一个都不会被种子覆盖回去，收藏 / 学习记录 / 笔记也不受影响
+ *      （它们按 `algo_key` 关联，种子只加行、不删行、不改行）；
+ *   2. **绝不删表重建**：全程只有 INSERT 和一条只改 `sort_order` 的 UPDATE；
+ *   3. `sort_order` 是**派生值**，等于这条算法在前端注册表里的下标
+ *      （`SEED_ALGORITHMS` 的展开顺序就是注册表顺序）。所以往注册表里插了新算法之后，
+ *      要把种子里的那些行重排一遍 —— 否则老库会变成"新算法和老算法挤在同一个
+ *      sort_order 上、列表顺序乱掉"。重排只动 `sort_order`，别的字段一律不碰；
+ *      后台**自己新增**的算法（algo_key 不在种子里）保持原样，位置也不动。
+ *
+ * 举例：老库里有 98 条（前端注册表当时也是 98 个），这次补进动态规划那 3 条 ——
+ * 结果是 101 条，新增的 3 条直接出现在"图"和"查找"之间，和前端注册表一一对应。
+ */
 function seedAlgorithms() {
-  const row = db.prepare('SELECT COUNT(*) AS n FROM algorithms').get()
-  if (Number(row.n) > 0) return 0
-
-  const insert = db
-    .prepare(
-      `INSERT INTO algorithms (algo_key, name, category, grp, difficulty, summary, online, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-    )
+  const insert = db.prepare(
+    `INSERT INTO algorithms (algo_key, name, category, grp, difficulty, summary, online, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+     ON CONFLICT(algo_key) DO NOTHING`,
+  )
+  const fixOrder = db.prepare(
+    'UPDATE algorithms SET sort_order = ? WHERE algo_key = ? AND sort_order <> ?',
+  )
 
   let order = 0
+  let inserted = 0
   db.exec('BEGIN')
   try {
     for (const [category, grp, items] of SEED_ALGORITHMS) {
       for (const [algoKey, name, difficulty, summary] of items) {
-        insert.run(algoKey, name, category, grp, difficulty, summary, order)
+        inserted += Number(insert.run(algoKey, name, category, grp, difficulty, summary, order).changes)
+        fixOrder.run(order, algoKey, order)
         order += 1
       }
     }
@@ -367,10 +417,10 @@ function seedAlgorithms() {
     db.exec('ROLLBACK')
     throw err
   }
-  return order
+  return inserted
 }
 
-/** 本次启动写了多少条算法种子（已经在库里就不写） */
+/** 本次启动**新插入**了多少条算法种子（已经在库里的、后台改过的都不算） */
 export const seededAlgorithms = seedAlgorithms()
 
 // ---------------------------------------------------------------------------

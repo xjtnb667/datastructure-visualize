@@ -43,6 +43,7 @@ import { heapSpecs, treeApplySpecs } from './treeApply'
 import { graphStorageSpecs } from './graphStorage'
 import { graphTraverseSpecs } from './graphTraverse'
 import { graphPathSpecs } from './graphPath'
+import { dpSpecs } from './dp'
 import { searchTreeSpecs } from './searchTree'
 import { blockSearchSpec, hashSearchSpec } from './searchMore'
 
@@ -97,6 +98,8 @@ export const algorithmRegistry: AlgorithmSpec[] = [
   ...graphStorageSpecs,
   ...graphTraverseSpecs,
   ...graphPathSpecs,
+  // 动态规划 · 背包问题 / 双串模型
+  ...dpSpecs,
 
   // ---------- 查找 ----------
   // 线性表的查找：顺序 / 折半 / 分块

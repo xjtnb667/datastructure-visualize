@@ -11,7 +11,8 @@
  * 要证明的三件事：
  *   ① 老库打开后，avatar 列被自动补上（`PRAGMA table_info` 里能看到）；
  *   ② 老库里的用户 / 收藏 / 学习记录 / 算法元数据**一条没少、值也没变**
- *      （尤其是算法：老库里已有元数据时，**绝不能**再灌一遍种子把它覆盖掉）；
+ *      （尤其是算法：老库里已有元数据时，**绝不能**再灌一遍种子把管理员改过的行覆盖掉；
+ *      但**缺的种子要补齐** —— 见下面《老库升级顺带补齐缺的种子》那条，动态规划就是这么进来的）；
  *   ③ 升级是幂等的：再跑一次什么都不做、也不报错。
  *
  * ⚠️ `server/db.mjs` 在 import 时就把库打开，所以 `DB_PATH` 必须在 `await import()` 之前设好。
@@ -101,7 +102,8 @@ const dbPath = join(dir, 'legacy-app.db')
     .run('legacy_admin', '老管理员', hash, LEGACY_SALT, 1700000000001)
 
   // 老库里已经有算法元数据（模拟"管理员在后台改过"）——
-  // 升级时**不能**再灌一遍种子把它覆盖回 98 条
+  // 升级时**不能**覆盖这三条（名字 / 难度 / 简介 / 下架状态都要留着），
+  // 但种子里**缺的那些**要补齐（见下面《老库升级顺带补齐缺的种子》那条用例）。
   const insertAlgo = legacy.prepare(
     `INSERT INTO algorithms (algo_key, name, category, grp, difficulty, summary, online, sort_order)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -142,7 +144,14 @@ after(() => {
 /** 老库升级前的快照（用来跟升级后逐项比对） */
 const BEFORE = {
   users: 2,
-  algorithms: 3,
+  /**
+   * 算法条数：老库自己那 3 条（bubble-sort / quick-sort / retired-algo）
+   * + 种子 101 条里**缺的那些**。
+   * `bubble-sort` 正好是种子里的 algo_key，所以它算"已存在、不重复插"——
+   * 于是补进来 101 - 1 = 100 条，合计 3 + 100 = 103 条。
+   */
+  algorithms: 103,
+  insertedAlgorithms: 100,
   favorites: 1,
   history: 1,
   bubbleName: '冒泡排序（我改过的名字）',
@@ -174,11 +183,15 @@ test('老库升级：users 表被补上 avatar 列，一行数据都不用重建
   assert.equal(addedAvatarColumn, true, '这个库原本没有 avatar 列，本次启动应当补上它')
 })
 
-test('升级不丢数据：用户 / 收藏 / 学习记录 / 算法元数据都还是原来的样子', () => {
+test('升级不丢数据：用户 / 收藏 / 学习记录 / 算法元数据原有的那些都还是原来的样子', () => {
   const count = (table) => Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n)
 
   assert.equal(count('users'), BEFORE.users, '用户数不能变')
-  assert.equal(count('algorithms'), BEFORE.algorithms, '算法条数不能变')
+  assert.equal(
+    count('algorithms'),
+    BEFORE.algorithms,
+    '算法 = 老库原有 3 条 + 补进来的 100 条缺项（种子 101 条里 bubble-sort 已在老库，不重复插）',
+  )
   assert.equal(count('favorites'), BEFORE.favorites, '收藏数不能变')
   assert.equal(count('history'), BEFORE.history, '学习记录数不能变')
 
@@ -197,6 +210,52 @@ test('升级不丢数据：用户 / 收藏 / 学习记录 / 算法元数据都�
 
   const retired = db.prepare('SELECT online FROM algorithms WHERE algo_key = ?').get('retired-algo')
   assert.equal(Number(retired.online), 0, '下架状态也要留着')
+})
+
+test('老库升级顺带补齐缺的种子：动态规划那 3 条进来了，顺序仍和前端注册表一致', async () => {
+  const count = (table) => Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n)
+
+  // 补进来的条数 = 种子里老库没有的那些（101 - bubble-sort 这 1 条）
+  assert.equal(dbModule.seededAlgorithms, BEFORE.insertedAlgorithms, '这次启动应当补进来 100 条')
+
+  // 老库原有那 3 条一条没少（名字 / 下架状态见上一条用例）
+  for (const key of ['bubble-sort', 'quick-sort', 'retired-algo']) {
+    assert.ok(db.prepare('SELECT id FROM algorithms WHERE algo_key = ?').get(key), `${key} 不能被删掉`)
+  }
+
+  // 动态规划：algo_key / 大类 / 子类都照前端注册表（dp.ts）
+  const dp = db
+    .prepare("SELECT algo_key, category, grp, sort_order FROM algorithms WHERE category = 'dp' ORDER BY sort_order")
+    .all()
+  assert.deepEqual(
+    dp.map((r) => r.algo_key),
+    ['dp-knapsack', 'dp-lcs', 'dp-edit-distance'],
+  )
+  assert.deepEqual(
+    dp.map((r) => r.grp),
+    ['背包问题', '双串模型', '双串模型'],
+  )
+
+  // sort_order 必须落在「图」和「查找」之间 —— 前端注册表里 dp 就插在这两段中间
+  const maxGraph = Number(
+    db.prepare("SELECT MAX(sort_order) AS m FROM algorithms WHERE category = 'graph'").get().m,
+  )
+  const minSearch = Number(
+    db.prepare("SELECT MIN(sort_order) AS m FROM algorithms WHERE category = 'search'").get().m,
+  )
+  for (const row of dp) {
+    assert.ok(Number(row.sort_order) > maxGraph, `${row.algo_key} 应当排在"图"之后`)
+    assert.ok(Number(row.sort_order) < minSearch, `${row.algo_key} 应当排在"查找"之前`)
+  }
+
+  // 幂等：把库再打开一次（等价于"后端又启动了一次"），不会再插一遍
+  const again = await import('../db.mjs?second-boot')
+  try {
+    assert.equal(again.seededAlgorithms, 0, '第二次启动不该再插入任何种子')
+    assert.equal(count('algorithms'), BEFORE.algorithms, '第二次启动也没多出行来')
+  } finally {
+    again.db.close()
+  }
 })
 
 test('升级是幂等的：再跑一次 ensureColumn 返回 false、不抛错（重复启动安全）', () => {

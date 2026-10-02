@@ -67,6 +67,25 @@ export interface HistoryItem {
   updated_at: number
 }
 
+/**
+ * 学习笔记：一个用户对一个算法**只有一条**（后端 `notes` 表的主键是 user_id + algo_key）。
+ * `content` 是纯文本（支持多行；界面不渲染 Markdown）；`created_at` 是第一次写的时间，
+ * 之后每次保存只动 `updated_at` —— 界面上"最后修改"显示的就是它。
+ */
+export interface Note {
+  algo_key: string
+  content: string
+  created_at: number
+  updated_at: number
+}
+
+/**
+ * 笔记正文的长度上限（按**去掉首尾空白后**的字符数算）。
+ * 服务端有一份一模一样的校验（`server/api.mjs` 的 `MAX_NOTE_LENGTH`），
+ * 这里这份只是让前端先挡一道、顺带给"还能写几个字"的计数用 —— 真正的把关在服务端。
+ */
+export const NOTE_MAX_LENGTH = 2000
+
 export interface AdminStats {
   users: number
   algorithms: number
@@ -280,6 +299,34 @@ export async function listHistory(): Promise<HistoryItem[]> {
 /** 上报一次学习进度：后端 views +1、max_step 取较大值（前端要节流，别每一步都发） */
 export async function reportHistory(algoKey: string, step: number, totalSteps: number): Promise<void> {
   await request<null>('POST', '/history', { algoKey, step, totalSteps })
+}
+
+// ---------------------------------------------------------------------------
+// 学习笔记（都要登录；后端只认令牌里的用户，所以只能读写自己的笔记）
+// ---------------------------------------------------------------------------
+/** 我的全部笔记（每个算法最多一条） */
+export async function listNotes(): Promise<Note[]> {
+  const data = await request<Note[] | null>('GET', '/notes')
+  return data ?? []
+}
+
+/** 某个算法的笔记；**还没写过返回 null（不是 404）** */
+export async function getNote(algoKey: string): Promise<Note | null> {
+  return request<Note | null>('GET', `/notes/${encodeURIComponent(algoKey)}`)
+}
+
+/**
+ * 新增或更新某个算法的笔记。
+ * ⚠️ `content` **去掉首尾空白后是空串 = 删掉这条笔记**（后端契约如此），
+ * 这时返回 `null`；正常保存则返回写进去的那一条（带服务端的时间戳）。
+ */
+export async function saveNote(algoKey: string, content: string): Promise<Note | null> {
+  return request<Note | null>('PUT', `/notes/${encodeURIComponent(algoKey)}`, { content })
+}
+
+/** 删除某个算法的笔记（幂等：没写过也不报错） */
+export async function removeNote(algoKey: string): Promise<void> {
+  await request<null>('DELETE', `/notes/${encodeURIComponent(algoKey)}`)
 }
 
 // ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ const CATEGORY_NAMES = {
   string: '串',
   tree: '树与二叉树',
   graph: '图',
+  dp: '动态规划',
   search: '查找',
   sort: '排序',
 }
@@ -281,6 +282,104 @@ function reportHistory({ user, body }) {
 }
 
 // ---------------------------------------------------------------------------
+// 学习笔记
+//
+// 一个用户对一个算法只有一条笔记（表主键是 (user_id, algo_key)）：
+//   GET    /notes              我的全部笔记
+//   GET    /notes/:algoKey     某一个算法的笔记，没有就是 null（**不是 404**，
+//                              "还没写过笔记"是正常状态，不该让前端当错误处理）
+//   PUT    /notes/:algoKey     新增或更新；content 去空白后为空 = 删掉这条笔记
+//   DELETE /notes/:algoKey     删除（幂等，删不存在的也返回成功）
+//
+// ⚠️ **user_id 一律取自令牌**（`requireAuth` 解析出来的 `user.id`），
+// 请求体里就算带了 user_id / userId 也不会被读 —— 这是"只能读写自己的笔记"的保证方式：
+// 每条 SQL 都带 `WHERE user_id = ?`，参数是服务端自己认出来的那个人，前端伪造不了。
+// ---------------------------------------------------------------------------
+/** 笔记正文的长度上限（按去空白后的字符数算；超出 400） */
+const MAX_NOTE_LENGTH = 2000
+
+/**
+ * 校验笔记正文，返回**去掉首尾空白**的内容（`''` 表示"删掉这条笔记"）。
+ * 不是字符串（undefined / null / 数字 / 对象）一律 400 —— 缺参数的提示写成
+ * "缺少参数 content"，让前端一眼看出是没传而不是内容有问题。
+ */
+function assertNoteContent(value) {
+  if (typeof value !== 'string') {
+    throw new HttpError(400, '缺少参数 content：笔记内容必须是字符串')
+  }
+  const content = value.trim()
+  if (content.length > MAX_NOTE_LENGTH) {
+    throw new HttpError(
+      400,
+      `笔记太长了：最多 ${MAX_NOTE_LENGTH} 个字，当前 ${content.length} 个字`,
+    )
+  }
+  return content
+}
+
+/** 删掉一个用户的一条笔记（幂等）。`saveNote` 收到空内容时也走它 */
+function deleteNoteRow(userId, algoKey) {
+  db.prepare('DELETE FROM notes WHERE user_id = ? AND algo_key = ?').run(userId, algoKey)
+}
+
+/** 取一个用户的一条笔记（没有就是 null） */
+function findNote(userId, algoKey) {
+  return plain(
+    db
+      .prepare(
+        `SELECT algo_key, content, created_at, updated_at
+           FROM notes WHERE user_id = ? AND algo_key = ?`,
+      )
+      .get(userId, algoKey),
+  )
+}
+
+function listNotes({ user }) {
+  return plainAll(
+    db
+      .prepare(
+        `SELECT algo_key, content, created_at, updated_at
+           FROM notes WHERE user_id = ? ORDER BY updated_at DESC, algo_key`,
+      )
+      .all(user.id),
+  )
+}
+
+function getNote({ user, params }) {
+  const algoKey = assertAlgoKey(params.algoKey)
+  return findNote(user.id, algoKey) ?? null
+}
+
+/** 新增 / 更新。返回写进去的那条（`created_at` 保持第一次写的时间）；内容是空的就删掉并返回 null */
+function saveNote({ user, params, body }) {
+  const algoKey = assertAlgoKey(params.algoKey)
+  const content = assertNoteContent(body.content)
+
+  if (content === '') {
+    deleteNoteRow(user.id, algoKey)
+    return null
+  }
+
+  const ts = now()
+  db.prepare(
+    `INSERT INTO notes (user_id, algo_key, content, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (user_id, algo_key) DO UPDATE SET
+       content    = excluded.content,
+       updated_at = excluded.updated_at`,
+  ).run(user.id, algoKey, content, ts, ts)
+
+  return findNote(user.id, algoKey)
+}
+
+function deleteNote({ user, params }) {
+  const algoKey = assertAlgoKey(params.algoKey)
+  // 幂等：笔记不存在时 DELETE 影响 0 行，同样返回成功（和"取消收藏"一个路子）
+  deleteNoteRow(user.id, algoKey)
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // 公开：算法元数据（只给上架的）
 // ---------------------------------------------------------------------------
 function listAlgorithms() {
@@ -384,6 +483,7 @@ function adminDeleteUser({ params, user: actor }) {
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id)
     db.prepare('DELETE FROM favorites WHERE user_id = ?').run(id)
     db.prepare('DELETE FROM history WHERE user_id = ?').run(id)
+    db.prepare('DELETE FROM notes WHERE user_id = ?').run(id)
     db.prepare('DELETE FROM users WHERE id = ?').run(id)
     db.exec('COMMIT')
   } catch (err) {
@@ -509,6 +609,7 @@ function adminDeleteAlgorithm({ params }) {
   try {
     db.prepare('DELETE FROM favorites WHERE algo_key = ?').run(target.algo_key)
     db.prepare('DELETE FROM history WHERE algo_key = ?').run(target.algo_key)
+    db.prepare('DELETE FROM notes WHERE algo_key = ?').run(target.algo_key)
     db.prepare('DELETE FROM algorithms WHERE id = ?').run(id)
     db.exec('COMMIT')
   } catch (err) {
@@ -535,6 +636,11 @@ const ROUTES = [
 
   { method: 'GET', path: '/history', handler: listHistory, auth: true },
   { method: 'POST', path: '/history', handler: reportHistory, auth: true },
+
+  { method: 'GET', path: '/notes', handler: listNotes, auth: true },
+  { method: 'GET', path: '/notes/:algoKey', handler: getNote, auth: true },
+  { method: 'PUT', path: '/notes/:algoKey', handler: saveNote, auth: true },
+  { method: 'DELETE', path: '/notes/:algoKey', handler: deleteNote, auth: true },
 
   { method: 'GET', path: '/algorithms', handler: listAlgorithms },
 
