@@ -16,9 +16,20 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 
 /** 数据目录 / 数据文件（deliverable 里就一个文件，备份 = 复制它） */
 export const DATA_DIR = join(HERE, 'data')
-export const DB_PATH = join(DATA_DIR, 'app.db')
 
-mkdirSync(DATA_DIR, { recursive: true })
+/**
+ * 数据文件路径。默认还是 `server/data/app.db`（正式运行的行为一个字都没改）。
+ *
+ * 唯一的可测性改造：允许用环境变量 `DB_PATH` 覆盖它 —— 自动化测试（`server/test/`）
+ * 靠它指向 `os.tmpdir()` 下的临时文件，**测完删掉**，所以永远碰不到真实数据库。
+ * ⚠️ 本模块在 import 时就把库打开了，所以 `DB_PATH` 必须在 **import 之前** 设置好
+ * （测试里是 `process.env.DB_PATH = …` 之后才 `await import()`）。
+ */
+export const DB_PATH = process.env.DB_PATH?.trim() ? process.env.DB_PATH.trim() : join(DATA_DIR, 'app.db')
+
+/** `:memory:` 是 SQLite 的内存库语法，没有父目录要建 */
+const IS_MEMORY_DB = DB_PATH === ':memory:'
+if (!IS_MEMORY_DB) mkdirSync(dirname(DB_PATH), { recursive: true })
 
 export const db = new DatabaseSync(DB_PATH)
 

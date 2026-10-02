@@ -9,7 +9,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host --port 4173",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run && node --test \"server/test/*.node-test.mjs\"",
+    "test:server": "node --test \"server/test/*.node-test.mjs\""
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.2",
