@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host --port 5173 --strictPort",
+    "server": "node server/index.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host --port 4173",
     "typecheck": "vue-tsc --noEmit",

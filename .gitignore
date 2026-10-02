@@ -4,6 +4,9 @@ dist
 .vite
 .shots
 
+# SQLite 数据文件（后端首次启动自动生成，不进版本库）
+server/data/
+
 # 开发日志与临时产物
 *.log
 *.tmp

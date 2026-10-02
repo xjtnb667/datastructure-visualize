@@ -2,11 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAlgorithmStore } from '@/stores/algorithm'
+import { useUserStore } from '@/stores/user'
 import { CATEGORIES } from '@/core/categories'
-import { countByCategory, getGroupedByCategory } from '@/algorithms'
-import type { AlgoCategoryId } from '@/core/types'
+import { getGroupedByCategory } from '@/algorithms'
+import type { AlgoCategoryId, AlgorithmSpec } from '@/core/types'
 
 const store = useAlgorithmStore()
+const userStore = useUserStore()
 const { algorithm } = storeToRefs(store)
 
 const open = ref(false)
@@ -19,8 +21,35 @@ const rootEl = ref<HTMLDivElement | null>(null)
 /** 右列（算法列表）—— 打开时要把它滚到"当前算法"那一行居中 */
 const algosEl = ref<HTMLElement | null>(null)
 
+/**
+ * 只显示**上架**的算法。
+ * 下架状态由管理员在后台改，前端从 `/api/algorithms` 拿；
+ * 后端没启动 / 游客时元数据是空的，`isOnline` 一律返回 true，
+ * 也就是"和以前完全一样，98 个全在"。
+ *
+ * 注意：**当前正在看的算法一定要留着**，否则切换器上会显示一个
+ * 列表里根本不存在的名字，看起来像是坏了。
+ */
+function visible(spec: AlgorithmSpec): boolean {
+  return userStore.isOnline(spec.id) || spec.id === algorithm.value.id
+}
+
+/** 各大类下剩几个算法（左列那个数字） */
+function visibleCount(id: AlgoCategoryId): number {
+  return getGroupedByCategory(id)
+    .flatMap((group) => group.items)
+    .filter(visible).length
+}
+
 /** 按子类分组；没有 group 的算法会合成一个空标题的组，模板里跳过标题即可 */
-const groups = computed(() => getGroupedByCategory(shownCategory.value))
+const groups = computed(() =>
+  getGroupedByCategory(shownCategory.value)
+    .map((group) => ({ group: group.group, items: group.items.filter(visible) }))
+    .filter((group) => group.items.length > 0),
+)
+
+/** 左列：整个大类都被下架了就不显示这一项，免得点进去是一片空白 */
+const categories = computed(() => CATEGORIES.filter((cat) => visibleCount(cat.id) > 0))
 
 /**
  * 把右列滚到"当前选中的算法"那一行，并让它落在**列表中间**。
@@ -128,7 +157,7 @@ onBeforeUnmount(() => {
       <div class="cat-col">
         <ul class="cats">
           <li
-            v-for="cat in CATEGORIES"
+            v-for="cat in categories"
             :key="cat.id"
             class="cat-item"
             :class="{ on: cat.id === shownCategory }"
@@ -137,7 +166,7 @@ onBeforeUnmount(() => {
           >
             <span class="check">{{ cat.id === shownCategory ? '✓' : '' }}</span>
             <span class="cat-name">{{ cat.name }}</span>
-            <span class="count">{{ countByCategory(cat.id) }}</span>
+            <span class="count">{{ visibleCount(cat.id) }}</span>
           </li>
         </ul>
         <p v-if="locked" class="lock-hint">已锁定，再次点击取消锁定</p>

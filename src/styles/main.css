@@ -349,6 +349,80 @@ body {
   background: transparent;
 }
 
+/*
+ * 主按钮（登录 / 注册 / 去看算法）。
+ * 就用平台的主色 #3f6fd8 —— 深色底上它足够醒目，又不会像纯饱和蓝那样刺眼。
+ */
+.btn.primary {
+  color: #ffffff;
+  font-weight: 600;
+  background: #3f6fd8;
+  border-color: #4b7ce6;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #4b7ce6;
+  border-color: #5b8bf0;
+}
+
+/*
+ * 算法面板标题栏上的收藏星标。
+ * 未收藏 = 空心 ☆（灰白，安静地待着）；已收藏 = 实心 ★（琥珀色，和"正在比较"同色系）。
+ * 宽度写死 26px，切换 ☆/★ 时标题栏不会被挤得抖一下。
+ */
+.fav-star {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: #8b949e;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s, border-color 0.14s;
+}
+
+.fav-star:hover {
+  color: #f5c518;
+  background: rgba(245, 197, 24, 0.12);
+  border-color: rgba(245, 197, 24, 0.35);
+}
+
+.fav-star.on {
+  color: #f5c518;
+  text-shadow: 0 0 10px rgba(245, 197, 24, 0.45);
+}
+
+/* 难度徽章：管理员在后台标了难度才有，用琥珀色和普通徽章区分开 */
+.badge.difficulty {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.38);
+}
+
+/*
+ * 底部的小提醒（比如"收藏失败，请稍后重试"）。
+ * 悬浮在页面底部中间，不占布局；2.6 秒后由组件自己收掉。
+ */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 200;
+  max-width: 80vw;
+  padding: 9px 16px;
+  font-size: 13px;
+  color: #ffd9d9;
+  background: #2a1a1c;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
 .chip {
   padding: 6px 10px;
   font-size: 12.5px;
@@ -377,3 +451,156 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- 表单输入框（登录 / 注册弹窗、后台的编辑弹窗共用） ---------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field > span {
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.field input {
+  padding: 9px 11px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: #e6edf3;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 8px;
+  transition: border-color 0.14s, background 0.14s;
+}
+
+.field input::placeholder {
+  color: #59636f;
+}
+
+.field input:hover:not(:disabled) {
+  border-color: #3c4757;
+}
+
+.field input:focus {
+  outline: none;
+  background: #1e2530;
+  border-color: #3f6fd8;
+}
+
+.field input:disabled {
+  color: #59636f;
+  background: #151a21;
+  cursor: not-allowed;
+}
+
+/* ---------- 登录 / 注册弹窗 ---------- */
+.auth-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  /* 半透明黑，但比纯黑偏蓝一点，和整体冷色深色主题一致 */
+  background: rgba(6, 9, 14, 0.68);
+}
+
+.auth-dialog {
+  width: 100%;
+  max-width: 372px;
+  padding: 16px 20px 20px;
+  background: #12161d;
+  border: 1px solid #2c3542;
+  border-radius: 14px;
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.62);
+}
+
+.auth-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 9px;
+}
+
+.auth-tab {
+  padding: 6px 18px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #9aa4b2;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s;
+}
+
+.auth-tab:hover {
+  color: #e6edf3;
+}
+
+.auth-tab.on {
+  color: #ffffff;
+  font-weight: 600;
+  background: #3f6fd8;
+}
+
+.auth-close {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  font-size: 13px;
+  color: #8b949e;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.auth-close:hover {
+  color: #e6edf3;
+  background: #1f2733;
+}
+
+.auth-hint {
+  margin: 12px 0 14px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #7d8694;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 后端返回的中文错误 / 前端校验没过：红底红字，一眼能看到 */
+.auth-error {
+  margin: 0;
+  padding: 8px 11px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #ff9c9c;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 8px;
+}
+
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 2px;
+}
+
