@@ -52,7 +52,7 @@ npm install       # 安装依赖
 npm run dev       # 启动前端 —— http://localhost:5173/（会自动把后端 3000 一起带起来；NO_AUTO_SERVER=1 可关掉）
 npm run server    # 只启动后端 —— http://localhost:3000/api（前后端分开跑时用）
 npm run build     # 生产构建（会先跑类型检查）
-npm test          # 跑全部自动化测试：前端 722 项（Vitest）+ 后端 102 个用例（node:test）= 824 项
+npm test          # 跑全部自动化测试：前端 728 项（Vitest）+ 后端 102 个用例（node:test）= 830 项
 npm run test:server   # 只跑后端那 102 个用例（server/test/，跑在临时库 + 随机端口上）
 npm run typecheck
 ```
@@ -252,7 +252,7 @@ src/
 | **后端** | Node 原生 `node:http` + `node:sqlite` + `node:crypto`（`server/` 4 个文件，约 1637 行） | **一个第三方包都没加**；没有 Express、没有 ORM |
 | **数据库** | SQLite（单文件 `server/data/app.db`，6 张表；users 含 `avatar` 列、另有 `notes` 笔记表） | 不用安装、不用配服务，但是真数据库（SQL / 事务 / 索引）；加列用**幂等 `ALTER TABLE`**、加表用**幂等 `CREATE TABLE IF NOT EXISTS`**，老库升级不丢数据 |
 | **密码与会话** | `crypto.scrypt` 加盐哈希 + 32 字节随机令牌（7 天） | 密码不存明文；比对用 `timingSafeEqual` |
-| **测试** | 前端 Vitest **722 项** + 后端 `node:test` **102 个用例** = **824 项全绿** | 前端管算法步骤序列与播放状态（`algorithms.spec.ts` 713 + `algorithm.spec.ts` 9），后端管接口：权限边界 / 参数校验 / 数据隔离 / SQL 注入与目录穿越 / 改密码作废其它设备会话 / **头像校验与老库升级** / **笔记的一人一条与越权防护**。`npm test` 前后端一起跑，`npm run test:server` 只跑后端；后端用 `%TEMP%` 临时库 + 随机端口，**不碰** `server/data/app.db` |
+| **测试** | 前端 Vitest **728 项** + 后端 `node:test` **102 个用例** = **830 项全绿** | 前端管算法步骤序列与播放状态（`algorithms.spec.ts` 713 + `algorithm.spec.ts` 9），另有 6 项是「进入学习不默认选中算法」的回归用例（`learnSelection.spec.ts`）；后端管接口：权限边界 / 参数校验 / 数据隔离 / SQL 注入与目录穿越 / 改密码作废其它设备会话 / **头像校验与老库升级** / **笔记的一人一条与越权防护**。`npm test` 前后端一起跑，`npm run test:server` 只跑后端；后端用 `%TEMP%` 临时库 + 随机端口，**不碰** `server/data/app.db` |
 | **图表** | **没有图表库** —— 学习报告页的图是手画的 | 覆盖率环是 **SVG** 圆（靠虚线长度表达百分比），大类分布条是 **CSS 宽度百分比**；数字全部由 `src/core/report.ts` 的纯函数算出。为"一个环 + 几条横条"引入几百 KB 的库不划算 |
 
 **取舍要说清楚**：不用框架和 ORM，换来的是"双击就能跑、零安装、故障面小"；代价是路由分发、参数校验、建表都要自己写，而且 SQLite 只适合单机小规模（要上高并发第一件要换的就是它）。详见《毕业设计答辩-问题与修复清单.md》第一部分第 6 条。
