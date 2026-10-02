@@ -10,7 +10,16 @@ import type { AlgoCategoryId, AlgorithmSpec } from '@/core/types'
 
 const store = useAlgorithmStore()
 const userStore = useUserStore()
-const { algorithm } = storeToRefs(store)
+const { algorithm, hasSelection } = storeToRefs(store)
+
+/**
+ * 列表里"打蓝色高亮"的那个算法 id —— **用户没选过就是空串**。
+ *
+ * 为什么不能直接用 `algorithm.id`：`algorithm` 一进页面就装着默认算法（冒泡排序），
+ * 用户还没选任何东西时，列表里就会把"冒泡排序"高亮成"你正在看的这个"，
+ * 而实际上他什么都没选（顶栏显示的是「请选择算法」）。空串谁都匹配不上，正好。
+ */
+const currentId = computed(() => (hasSelection.value ? algorithm.value.id : ''))
 
 const open = ref(false)
 /** 右列正在展示哪个大类 —— 绿色勾就打在它身上 */
@@ -42,9 +51,10 @@ const resultsEl = ref<HTMLElement | null>(null)
  *
  * 注意：**当前正在看的算法一定要留着**，否则切换器上会显示一个
  * 列表里根本不存在的名字，看起来像是坏了。
+ * （"当前正在看" = `currentId`；用户还没选过算法时它是空串，没有谁需要被留住。）
  */
 function visible(spec: AlgorithmSpec): boolean {
-  return userStore.isOnline(spec.id) || spec.id === algorithm.value.id
+  return userStore.isOnline(spec.id) || spec.id === currentId.value
 }
 
 /** 各大类下剩几个算法（左列那个数字） */
@@ -112,6 +122,15 @@ function toggle(): void {
 
 function close(): void {
   open.value = false
+}
+
+/**
+ * 打开面板（并且和点触发器一样：回到当前算法所属大类、把当前算法滚到中间）。
+ * 空状态里那颗「看看有哪些算法」按钮用它 —— 界面上只有一个面板，
+ * 不必为它再写一套"从外面打开"的第二状态。
+ */
+function openPanel(): void {
+  if (!open.value) toggle()
 }
 
 /**
@@ -263,14 +282,28 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointerDown)
   document.removeEventListener('keydown', onKeydown)
 })
+
+/**
+ * 放出去的东西：
+ *   - `openPanel()` —— 空状态里那颗「看看有哪些算法」按钮用它打开面板；
+ *   - `open` —— 面板开没开（父组件和自动化测试都能直接看）。
+ */
+defineExpose({ openPanel, open })
 </script>
 
 <template>
   <div ref="rootEl" class="picker">
+    <!--
+      触发器上的两段文字（大类 / 算法名）**只在用户选过算法时**才显示：
+      没选之前显示「请选择算法」，免得看起来像"已经默认选中了冒泡排序"。
+    -->
     <button class="trigger" :class="{ open }" @click="toggle">
-      <span class="cat">{{ store.category.name }}</span>
-      <span class="slash">/</span>
-      <span class="name">{{ algorithm.name }}</span>
+      <template v-if="hasSelection">
+        <span class="cat">{{ store.category.name }}</span>
+        <span class="slash">/</span>
+        <span class="name">{{ algorithm.name }}</span>
+      </template>
+      <span v-else class="placeholder">请选择算法</span>
       <span class="caret">▾</span>
     </button>
 
@@ -307,7 +340,7 @@ onBeforeUnmount(() => {
             v-for="(hit, index) in results"
             :key="hit.spec.id"
             class="result-item"
-            :class="{ on: hit.spec.id === algorithm.id, active: index === activeIndex }"
+            :class="{ on: hit.spec.id === currentId, active: index === activeIndex }"
             @mouseenter="activeIndex = index"
             @click="choose(hit.spec.id)"
           >
@@ -355,7 +388,7 @@ onBeforeUnmount(() => {
                 v-for="item in g.items"
                 :key="item.id"
                 class="algo-item"
-                :class="{ on: item.id === algorithm.id }"
+                :class="{ on: item.id === currentId }"
                 @click="choose(item.id)"
               >
                 <div class="algo-top">
@@ -401,6 +434,15 @@ onBeforeUnmount(() => {
 .cat {
   color: #f5c518;
   font-weight: 600;
+}
+
+/*
+ * 还没选算法时触发器上那句「请选择算法」。
+ * 用灰色（#8b949e，和顶栏其它标签同色）而不是白色：它是**提示**，
+ * 不能看起来像"已经选中了一个叫『请选择算法』的算法"。
+ */
+.placeholder {
+  color: #8b949e;
 }
 
 .slash {

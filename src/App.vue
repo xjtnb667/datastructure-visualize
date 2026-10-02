@@ -42,6 +42,12 @@ const { algorithm, currentAction, currentComment, currentVars, currentStats, isS
 const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null)
 /** 「手动输入数据」弹窗（顶栏那个 ✏️ 按钮打开它） */
 const dataDialog = ref<InstanceType<typeof DataInputDialog> | null>(null)
+/**
+ * 顶栏那个算法选择器。
+ * 空状态里那颗「看看有哪些算法」按钮要**把它打开**，所以这里留一个引用
+ * （组件用 `defineExpose({ openPanel })` 把打开面板的方法放出来）。
+ */
+const pickerRef = ref<InstanceType<typeof AlgorithmPicker> | null>(null)
 /** 收藏失败时的提醒（比如后端没启动）。只在"点不动"的时候出现，2.6 秒后自己消失 */
 const notice = ref('')
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -67,6 +73,24 @@ const difficulty = computed(() => {
   const meta = userStore.meta(algorithm.value.id)
   return meta ? difficultyText(meta.difficulty) : ''
 })
+
+/**
+ * 顶栏「数据」那一组（数据规模 / 随机数据 / 手动输入 / 示例数据）**为什么点不了**，
+ * 返回空串表示能用：
+ *   1. **还没选算法** —— 数据是喂给"当前算法"的，连算法都没有，点了也没意义；
+ *   2. 输入是**固定串**的算法（括号匹配 / 表达式求值）—— 本来就改不了数据。
+ * 同一个原因也拿去做按钮的 `title`，鼠标一停就知道为什么点不了（禁用比"点了没反应"清楚）。
+ */
+const dataDisabledReason = computed(() => {
+  if (!store.hasSelection) return '先选一个算法'
+  if (algorithm.value.useFixedInput) return `「${algorithm.value.name}」的输入是固定的`
+  return ''
+})
+
+/** 能用时显示这句说明，不能用时前面拼上原因 */
+function dataTitle(hint: string): string {
+  return dataDisabledReason.value ? `${dataDisabledReason.value}，暂时用不了` : hint
+}
 
 function showNotice(text: string): void {
   notice.value = text
@@ -94,6 +118,8 @@ function onSizeChange(event: Event): void {
 
 /** 键盘快捷键（SRS NFR-14）：空格播放/暂停，左右方向键单步 */
 function onKeydown(event: KeyboardEvent): void {
+  // 还没选算法（空状态）时没有步骤可播，快捷键一律不响应
+  if (!store.hasSelection) return
   const tag = (event.target as HTMLElement | null)?.tagName
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
 
@@ -143,36 +169,50 @@ onBeforeUnmount(() => {
 
       <div class="pickers">
         <label class="picker-label">算法</label>
-        <AlgorithmPicker />
+        <!-- 还没选算法时它显示「请选择算法」；空状态里那颗按钮也用它来打开面板 -->
+        <AlgorithmPicker ref="pickerRef" />
 
-        <label :class="{ off: algorithm.useFixedInput }">
+        <label :class="{ off: dataDisabledReason !== '' }">
           <span>数据规模</span>
-          <select :value="store.dataSize" :disabled="algorithm.useFixedInput" @change="onSizeChange">
+          <select
+            :value="store.dataSize"
+            :disabled="dataDisabledReason !== ''"
+            :title="dataTitle('选一个数据规模')"
+            @change="onSizeChange"
+          >
             <option v-for="n in store.sizes" :key="n" :value="n">{{ n }} 个</option>
           </select>
         </label>
 
-        <button class="btn ghost" :disabled="algorithm.useFixedInput" @click="store.randomize()">
-          🎲 随机数据
-        </button>
         <!--
-          手动输入数据：点开弹窗自己敲一串数字（5,2,9,1,7,3）。
-          输入是**固定串**的算法（括号匹配 / 表达式求值）用不上，直接禁用并说明原因 ——
-          禁用比"点了没反应"清楚。title 写在按钮上，鼠标一停就能看到为什么。
+          「数据」这一组（随机 / 手动 / 示例）在**没选算法**时一律 disabled，
+          并用 title 说清原因：数据是喂给"当前算法"的，没有当前算法时点了没有意义。
+          输入是固定串的算法（括号匹配 / 表达式求值）同样禁用并说明原因。
         -->
         <button
           class="btn ghost"
-          :disabled="algorithm.useFixedInput"
-          :title="
-            algorithm.useFixedInput
-              ? `「${algorithm.name}」的输入是固定的，不能用自定义数据`
-              : '自己输入一串数字（2~12 个整数，用逗号或空格分开）'
-          "
+          :disabled="dataDisabledReason !== ''"
+          :title="dataTitle('随机生成一组数据')"
+          @click="store.randomize()"
+        >
+          🎲 随机数据
+        </button>
+        <button
+          class="btn ghost"
+          :disabled="dataDisabledReason !== ''"
+          :title="dataTitle('自己输入一串数字（2~12 个整数，用逗号或空格分开）')"
           @click="dataDialog?.open()"
         >
           ✏️ 手动输入
         </button>
-        <button class="btn ghost" @click="store.restoreDefault()">示例数据</button>
+        <button
+          class="btn ghost"
+          :disabled="dataDisabledReason !== ''"
+          :title="dataTitle('载入这个算法自带的示例数据')"
+          @click="store.restoreDefault()"
+        >
+          示例数据
+        </button>
       </div>
 
       <!-- 「我的学习报告」入口：顶栏右侧、用户区左边，和收藏一样是"我的"这类功能 -->
@@ -197,96 +237,117 @@ onBeforeUnmount(() => {
 
     <!-- 主界面：算法可视化（`#/learn`） -->
     <template v-else>
-      <main class="stage">
-        <section class="pane">
-          <div class="pane-head">
-            <h2>{{ algorithm.name }}</h2>
-            <button
-              class="fav-star"
-              :class="{ on: favorited }"
-              :title="favorited ? '取消收藏这个算法' : '收藏这个算法（登录后可用）'"
-              @click="onToggleFavorite"
-            >
-              {{ favorited ? '★' : '☆' }}
-            </button>
-            <span class="badge">{{ store.category.name }}</span>
-            <span v-if="algorithm.group" class="badge">{{ algorithm.group }}</span>
-            <span v-if="difficulty" class="badge difficulty">难度 {{ difficulty }}</span>
-            <span class="badge">时间 {{ algorithm.complexity.time }}</span>
-            <span class="badge">空间 {{ algorithm.complexity.space }}</span>
-            <span v-if="algorithm.complexity.stable !== undefined" class="badge">
-              {{ algorithm.complexity.stable ? '稳定' : '不稳定' }}
-            </span>
-          </div>
-          <div class="pane-body">
-            <CodePanel />
-          </div>
-        </section>
-
-        <section class="pane">
-          <div class="pane-head">
-            <h2>{{ algorithm.name }}</h2>
-            <span class="badge">{{ algorithm.summary }}</span>
-          </div>
-
-          <!-- 图例随大类切换：排序 / 查找 / 线性表关注的状态不一样 -->
-          <div class="legend">
-            <span v-for="item in store.category.legend" :key="item.label">
-              <i :style="{ background: item.color }"></i>{{ item.label }}
-            </span>
-          </div>
-
-          <div class="pane-body">
-            <CanvasPanel v-if="store.renderer === 'array'" />
-            <SeqListPanel v-else-if="store.renderer === 'seqlist'" />
-            <LinkedListPanel v-else-if="store.renderer === 'linked'" />
-            <TreePanel v-else-if="store.renderer === 'tree'" />
-            <GraphPanel v-else-if="store.renderer === 'graph'" />
-            <ScenePanel v-else />
-          </div>
-        </section>
-      </main>
-
       <!--
-        学习笔记：整行排在"代码 / 动画"两块面板下面、步骤控制条上面。
-        为什么放这里：
-          - 笔记是**跟着当前算法**的（`:algo-key` 传的就是上面两块面板里那个算法），
-            放在它们正下方，眼睛不用来回找；
-          - 它是**整行**的，所以左栏 40% / 右栏 60% 的既有分栏一点没动 ——
-            塞进左栏会挤掉代码、塞进右栏会挤掉动画（动画才是主角）；
-          - 面板只有一个 `algoKey` 属性、登录框内嵌在它自己里面，挂上就能用，
-            父组件不需要额外接线（未登录时它自己显示"登录 / 注册"并弹窗）。
+        ⭐ 还没选算法 —— 只显示空状态，**一点算法界面都不出**（没有代码面板 / 动画 / 图例 /
+        笔记面板 / 步骤控制条 / 收藏星标，也没有上一下个算法按钮）。
+        为什么不默认选中冒泡排序：那次"自动选中"会被学习记录当成一次学习记进 `history`
+        （用户根本没看，记录里却多一条）。详见 `stores/algorithm.ts` 的 `hasSelection`。
       -->
-      <div class="notes-wrap">
-        <NotesPanel :algo-key="algorithm.id" />
-      </div>
+      <section v-if="!store.hasSelection" class="learn-empty">
+        <p class="learn-empty-icon">🧭</p>
+        <p class="learn-empty-title">先选一个算法开始学习吧</p>
+        <p class="learn-empty-tip">
+          从上方顶栏的选择器里挑一个：大类 → 子类 → 算法（也可以直接搜算法名）。
+          选好之后，这里就会出现代码、动画和上一步 / 下一步这些控制。
+        </p>
+        <button class="btn primary" @click="pickerRef?.openPanel()">看看有哪些算法</button>
+      </section>
 
-      <footer class="bottom">
-        <div class="explain">
-          <div class="explain-body">
-            <div class="explain-head">
-              <span class="action-tag" :data-action="currentAction">
-                {{ ACTION_LABEL[currentAction] }}
+      <!-- 用户选过算法了：完整的算法学习界面 -->
+      <template v-else>
+        <main class="stage">
+          <section class="pane">
+            <div class="pane-head">
+              <h2>{{ algorithm.name }}</h2>
+              <button
+                class="fav-star"
+                :class="{ on: favorited }"
+                :title="favorited ? '取消收藏这个算法' : '收藏这个算法（登录后可用）'"
+                @click="onToggleFavorite"
+              >
+                {{ favorited ? '★' : '☆' }}
+              </button>
+              <span class="badge">{{ store.category.name }}</span>
+              <span v-if="algorithm.group" class="badge">{{ algorithm.group }}</span>
+              <span v-if="difficulty" class="badge difficulty">难度 {{ difficulty }}</span>
+              <span class="badge">时间 {{ algorithm.complexity.time }}</span>
+              <span class="badge">空间 {{ algorithm.complexity.space }}</span>
+              <span v-if="algorithm.complexity.stable !== undefined" class="badge">
+                {{ algorithm.complexity.stable ? '稳定' : '不稳定' }}
               </span>
-              <p class="comment">{{ currentComment }}</p>
             </div>
-            <div class="chips">
-              <span v-for="item in varList" :key="item.key" class="chip-var">
-                {{ item.key }} = {{ item.value }}
-              </span>
-              <span class="chip-var stat">比较 {{ currentStats.compares }} 次</span>
-              <span v-if="!isSearch" class="chip-var stat">
-                交换 / 移动 {{ currentStats.swaps }} 次
-              </span>
+            <div class="pane-body">
+              <CodePanel />
             </div>
-          </div>
+          </section>
 
-          <!-- 「上一个 / 下一个算法」放在解说栏右边、单步控制左边的空闲区域里 -->
-          <AlgorithmNav />
+          <section class="pane">
+            <div class="pane-head">
+              <h2>{{ algorithm.name }}</h2>
+              <span class="badge">{{ algorithm.summary }}</span>
+            </div>
+
+            <!-- 图例随大类切换：排序 / 查找 / 线性表关注的状态不一样 -->
+            <div class="legend">
+              <span v-for="item in store.category.legend" :key="item.label">
+                <i :style="{ background: item.color }"></i>{{ item.label }}
+              </span>
+            </div>
+
+            <div class="pane-body">
+              <CanvasPanel v-if="store.renderer === 'array'" />
+              <SeqListPanel v-else-if="store.renderer === 'seqlist'" />
+              <LinkedListPanel v-else-if="store.renderer === 'linked'" />
+              <TreePanel v-else-if="store.renderer === 'tree'" />
+              <GraphPanel v-else-if="store.renderer === 'graph'" />
+              <ScenePanel v-else />
+            </div>
+          </section>
+        </main>
+
+        <!--
+          学习笔记：整行排在"代码 / 动画"两块面板下面、步骤控制条上面。
+          为什么放这里：
+            - 笔记是**跟着当前算法**的（`:algo-key` 传的就是上面两块面板里那个算法），
+              放在它们正下方，眼睛不用来回找；
+            - 它是**整行**的，所以左栏 40% / 右栏 60% 的既有分栏一点没动 ——
+              塞进左栏会挤掉代码、塞进右栏会挤掉动画（动画才是主角）；
+            - 面板只有一个 `algoKey` 属性、登录框内嵌在它自己里面，挂上就能用，
+              父组件不需要额外接线（未登录时它自己显示"登录 / 注册"并弹窗）。
+          ⚠️ 它整块都在"用户选过算法"这一支里：没选算法时 `algorithm.id` 只是那个
+          默认候选（冒泡排序）的 id，拿它去查笔记会查到"用户没看过的算法"的笔记。
+        -->
+        <div class="notes-wrap">
+          <NotesPanel :algo-key="algorithm.id" />
         </div>
 
-        <ControlPanel />
-      </footer>
+        <footer class="bottom">
+          <div class="explain">
+            <div class="explain-body">
+              <div class="explain-head">
+                <span class="action-tag" :data-action="currentAction">
+                  {{ ACTION_LABEL[currentAction] }}
+                </span>
+                <p class="comment">{{ currentComment }}</p>
+              </div>
+              <div class="chips">
+                <span v-for="item in varList" :key="item.key" class="chip-var">
+                  {{ item.key }} = {{ item.value }}
+                </span>
+                <span class="chip-var stat">比较 {{ currentStats.compares }} 次</span>
+                <span v-if="!isSearch" class="chip-var stat">
+                  交换 / 移动 {{ currentStats.swaps }} 次
+                </span>
+              </div>
+            </div>
+
+            <!-- 「上一个 / 下一个算法」放在解说栏右边、单步控制左边的空闲区域里 -->
+            <AlgorithmNav />
+          </div>
+
+          <ControlPanel />
+        </footer>
+      </template>
     </template>
 
     <!-- 收藏失败之类的小提醒：贴在页面底部中间，自己会消失 -->

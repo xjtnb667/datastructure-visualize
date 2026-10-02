@@ -64,6 +64,12 @@ export const useUserStore = defineStore('user', () => {
   /** 正在等接口返回（按钮转圈 / 禁用用） */
   const busy = ref(false)
 
+  /**
+   * 算法 store 的引用：学习记录的上报完全跟着"当前算法"走。
+   * 它在下面的 `reportView` 里也要用（判断"用户到底选过算法没有"），所以放在最前面。
+   */
+  const algoStore = useAlgorithmStore()
+
   /** 每次接口调用自增。用来丢掉"过期的返回"：先发的请求后回来时不该覆盖新状态 */
   let callSeq = 0
 
@@ -290,6 +296,15 @@ export const useUserStore = defineStore('user', () => {
    * 可 `lastReportAt` 已经被改掉了 —— 之后第一步就会白等 2 秒。这里单独记一个标志位。
    */
   let hasReportedSinceSwitch = false
+  /**
+   * **当前这个算法已经发出去过**的最大步数。
+   *
+   * 换算法时靠它判断"上一个算法还有没有没发出去的进度"：只有
+   * `reportedMaxStep > sentMaxStep`（= 攒了新的、还没报过的进度）才值得补发一次。
+   * 少了它的话，"选 A → 等 2 秒报过 → 再选 B"会把 A 已经报过的那份**原样再报一遍**，
+   * A 的打开次数就多加了一次 —— 和"默认进入算一次学习"是同一类多记。
+   */
+  let sentMaxStep = 0
 
   function clearFlushTimer(): void {
     if (flushTimer !== undefined) {
@@ -311,6 +326,7 @@ export const useUserStore = defineStore('user', () => {
 
     const step = reportedMaxStep
     const total = reportedTotal
+    sentMaxStep = step
     void Promise.resolve(reportHistory(key, step, total)).catch(() => {
       // 静默失败：学习记录是附属功能，丢了也不该打断看动画
     })
@@ -356,12 +372,20 @@ export const useUserStore = defineStore('user', () => {
    */
   function reportView(algoKey: string, step: number, totalSteps: number): void {
     if (!isLoggedIn.value) return
+    // ⭐ 用户还没选算法 = 还没开始学：任何情况都**不发上报请求**。
+    // 上面的 watch 已经不会在没选算法时调进来，这里再挡一层，
+    // 保证"直接调 reportView"也不会把一次默认进入记成一次学习。
+    if (!algoStore.hasSelection) return
     if (algoKey !== reportedAlgoKey) {
-      // 换了算法：把上一个算法攒着的那点进度先发掉，再重置计数
-      if (reportedAlgoKey !== null && reportedMaxStep > 0) sendReport()
+      // 换了算法：把上一个算法**还没发出去**的那点进度补发掉，再重置计数。
+      // ⚠️ 判据是 `reportedMaxStep > sentMaxStep`（攒了新的、没报过的进度），
+      // 不是 `reportedMaxStep > 0` —— 后者的意思是"报过一次就够本了"，
+      // 会在"已经报过、进度又没再变"时把上一个算法的打开次数**多加一次**。
+      if (reportedAlgoKey !== null && reportedMaxStep > sentMaxStep) sendReport()
       clearFlushTimer()
       reportedAlgoKey = algoKey
       reportedMaxStep = 0
+      sentMaxStep = 0
       reportedTotal = totalSteps
       lastReportAt = 0
       stepsSinceReport = 0
@@ -387,32 +411,50 @@ export const useUserStore = defineStore('user', () => {
   }
 
   /**
-   * 盯着"当前算法"：换了算法就立刻上报一次（= 打开次数 +1）。
-   * 放在 store 里而不是组件里，是为了保证**不管从哪儿换算法**
-   * （选择器 / 上一个算法 / 收藏页点回来）都记得上。
+   * 当前**用户真正在看**的算法 id；用户还没选算法时就是 `null`。
+   *
+   * ⭐ 上报只看它，不看 `algorithm.id`：`algorithm` 一进页面就装着默认算法（冒泡排序），
+   * 直接盯 `algorithm.id` 的话，进 `#/learn` 这一次"默认进入"会被算成一次学习
+   * （`history` 里多一条"打开过冒泡排序"，用户根本没看）。
+   * 换成 `hasSelection ? id : null` 之后：
+   *   - 刷新 / 首次进入 / 从首页点「进入学习」—— `hasSelection` 是 false，值是 null，**一次都不报**；
+   *   - 用户点选择器 / 上一下个算法 / 收藏页"继续看" / `?algo=xxx` 直达 ——
+   *     `selectAlgorithm()` 把 `hasSelection` 置 true，值从 null 变成那个 id，**恰好报一次**。
    */
-  const algoStore = useAlgorithmStore()
-  watch(
-    () => algoStore.algorithm.id,
-    (id) => reportView(id, 1, Math.max(algoStore.totalSteps, 1)),
-    { immediate: true },
+  const activeAlgoId = computed<string | null>(() =>
+    algoStore.hasSelection ? algoStore.algorithm.id : null,
   )
+
+  /**
+   * 盯着"用户选中的算法"：变了就上报一次（= 打开次数 +1）。
+   * 放在 store 里而不是组件里，是为了保证**不管从哪儿选中算法**
+   * （选择器 / 上一个算法 / 收藏页点回来 / 分享链接）都记得上。
+   * 注意没有 `immediate` 也无所谓 —— 初值只可能是 null（没选算法），本来就不该报。
+   */
+  watch(activeAlgoId, (id) => {
+    if (id === null) return
+    reportView(id, 1, Math.max(algoStore.totalSteps, 1))
+  })
 
   /**
    * 登录状态一变就把攒着的进度处理掉。
    * 退出登录：丢掉攒的计数，别再发请求。
-   * 登录：**补报一次当前正开着的算法** —— 打开页面时如果还没登录/还没确认登录态，
-   * 上面那个 watch 的第一次上报会被跳过；等登录完成后不补这一次的话，
+   * 登录：**当前确实有用户选中的算法时**才补报一次 —— 打开页面时如果还没登录 /
+   * 还没确认登录态，上面那个 watch 的那一次上报会被跳过；等登录完成后不补这一次的话，
    * "打开过这个算法"就永远少记一次（用户还会以为记录坏了）。
+   * 没选算法（`activeAlgoId` 是 null）时**什么都不做**：那只是"默认进入"，不算学习。
    */
   watch(isLoggedIn, (logged) => {
     if (!logged) {
       reportedAlgoKey = null
       reportedMaxStep = 0
+      sentMaxStep = 0
       clearFlushTimer()
       return
     }
-    reportView(algoStore.algorithm.id, 1, Math.max(algoStore.totalSteps, 1))
+    const id = activeAlgoId.value
+    if (id === null) return
+    reportView(id, 1, Math.max(algoStore.totalSteps, 1))
   })
 
   function errorText(error: unknown): string {

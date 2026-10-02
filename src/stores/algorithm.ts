@@ -31,7 +31,30 @@ function randomData(n: number): number[] {
 
 export const useAlgorithmStore = defineStore('algorithm', () => {
   // ---------- state ----------
+  /**
+   * 「当前算法」。
+   *
+   * ⚠️ **它一开始就装着默认算法（冒泡排序），但这不等于"用户选过"。**
+   * 选没选看下面的 `hasSelection`。为什么让它一直是个合法算法：
+   * 渲染器、图例、数据规模候选值、上/下一个算法的边界……全都在读 `algorithm`，
+   * 让它永远非空就不必给每一处都加判空，改动风险最小。
+   */
   const algorithm = shallowRef<AlgorithmSpec>(getAlgorithm(DEFAULT_ALGORITHM_ID))
+  /**
+   * 用户**主动选中过**算法了没有。界面是否显示算法、要不要上报学习记录，都看它。
+   *
+   * ⭐ 为什么绝不能"进页面就默认选中"：
+   * 学习记录里的「打开次数」是按"用户切到某个算法"上报的（见 `stores/user.ts` 的上报 watch）。
+   * 进页面就自动选中冒泡排序的话，这一次**自动**选中会被当成一次学习记进 `history` ——
+   * 用户根本没看，记录里却多了一条"打开过冒泡排序"。
+   * 所以：进 `#/learn` 时它一律是 `false`（界面显示空状态、一次都不上报），
+   * 只有用户真的选了才由 `selectAlgorithm()` 置为 `true`。
+   *
+   * 谁算"用户真的选了"：点选择器 / 点上一下个算法 / 收藏页与报告页点"继续看" /
+   * 带 `?algo=xxx` 的分享链接直达 —— 这些都是"用户要看这个算法"的明确意图；
+   * 而页面刷新、首次进入、回车到 `#/learn` 都**不是**。
+   */
+  const hasSelection = ref(false)
   const codeLines = ref<string[]>([])
   const inputData = ref<number[]>([])
   /** 查找类算法的目标值 */
@@ -217,9 +240,25 @@ export const useAlgorithmStore = defineStore('algorithm', () => {
     speed.value = value
   }
 
+  /**
+   * 选中一个算法。
+   *
+   * ⭐ **只有用户主动选才会走这里**（算法选择器 / 上一下个算法 / 收藏页和报告页的
+   * "继续看" / 分享链接 `?algo=xxx`），所以它同时就是"用户选过"这个标志的**唯一来源** ——
+   * 学习记录的上报只认它（见 `stores/user.ts`），自动选中不会经过这里。
+   */
   function selectAlgorithm(id: string): void {
     const spec = getAlgorithm(id)
-    if (spec.id === algorithm.value.id) return
+    // 先置标志、再比较 id：用户完全可能恰好选中"默认装着的那个"（冒泡排序），
+    // 那种情况下面的早返回会跳过 load()，但"用户选过了"这件事必须照样记上。
+    const firstPick = !hasSelection.value
+    hasSelection.value = true
+    if (spec.id === algorithm.value.id) {
+      // 选的是同一个算法：平时什么都不用做（保留用户看到第几步）。
+      // 但"从没选过"时它只是默认候选转正、步骤序列还没为它准备过，得补一次 load()。
+      if (firstPick) load()
+      return
+    }
     algorithm.value = spec
     load()
   }
@@ -256,6 +295,7 @@ export const useAlgorithmStore = defineStore('algorithm', () => {
   return {
     // state
     algorithm,
+    hasSelection,
     codeLines,
     inputData,
     target,

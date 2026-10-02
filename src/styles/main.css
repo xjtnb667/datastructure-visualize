@@ -784,3 +784,56 @@ body {
     max-height: 26vh;
   }
 }
+
+/* ==========================================================================
+ * 算法界面（`#/learn`）· 还没选算法时的**空状态**
+ * 用户从首页点「进入学习-->」进来时，这里不显示任何算法（代码 / 动画 / 步骤条 /
+ * 笔记全部不渲染），只显示这一块居中提示，等他挑了算法再出现完整界面。
+ * 为什么不能默认显示冒泡排序：那次"默认进入"会被学习记录当成一次学习（详见
+ * `stores/algorithm.ts` 的 `hasSelection` 注释）。
+ * 配色沿用全局那套：面板 #12161d / 边框 #232a35 / 标题 #e6edf3 /
+ * 次要文字 #8b949e / 主按钮 #3f6fd8（`.btn.primary`）。
+ * ========================================================================== */
+.learn-empty {
+  /* 它和 `.stage` 是同一个位置（`.app` 的直接子元素、纵向排列），所以用同样的
+     flex:1 把顶栏下面的空间占满，提示才会落在整页正中 */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 16px;
+  text-align: center;
+  background: #12161d;
+  border: 1px solid #232a35;
+  border-radius: 12px;
+}
+
+.learn-empty-icon {
+  margin: 0 0 2px;
+  font-size: 40px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.learn-empty-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #e6edf3;
+}
+
+.learn-empty-tip {
+  margin: 0;
+  max-width: 460px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #8b949e;
+}
+
+/* 那颗「看看有哪些算法」按钮和上面两行文字拉开一点，别挤成一坨 */
+.learn-empty .btn {
+  margin-top: 6px;
+}
