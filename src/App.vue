@@ -279,6 +279,18 @@ onBeforeUnmount(() => {
             <div class="pane-body">
               <CodePanel />
             </div>
+
+            <!--
+              学习笔记：放在**左栏（代码框）里面**，所以宽度天然等于代码框。
+              以前它是整行放在两个面板下面 —— 那样会从整页高度里切走一条，
+              动画区跟着变矮。放进左栏之后，只有代码区让出高度，动画区一点不受影响。
+              未登录时它自己显示"登录 / 注册"并弹窗，父组件不用接线。
+              ⚠️ 它整块都在"用户选过算法"这一支里：没选算法时 `algorithm.id` 只是默认候选
+              （冒泡排序）的 id，拿它查笔记会查到"用户没看过的算法"的笔记。
+            -->
+            <div class="notes-wrap">
+              <NotesPanel :algo-key="algorithm.id" />
+            </div>
           </section>
 
           <section class="pane">
@@ -317,10 +329,6 @@ onBeforeUnmount(() => {
           ⚠️ 它整块都在"用户选过算法"这一支里：没选算法时 `algorithm.id` 只是那个
           默认候选（冒泡排序）的 id，拿它去查笔记会查到"用户没看过的算法"的笔记。
         -->
-        <div class="notes-wrap">
-          <NotesPanel :algo-key="algorithm.id" />
-        </div>
-
         <footer class="bottom">
           <div class="explain">
             <div class="explain-body">

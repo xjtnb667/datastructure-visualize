@@ -764,24 +764,29 @@ body {
   flex: none;
   display: flex;
   flex-direction: column;
+  /* 内嵌在左栏代码面板里：固定上限高度，超出由面板内部滚动。
+     这样"笔记再长也不会把代码框压没"，而且完全不占右栏动画的高度。 */
+  max-height: 32vh;
+  overflow: auto;
+  border-top: 1px solid #232a35;
 }
 
-/* 有笔记区时，代码 / 动画两块面板至少留 300px —— 不够就让页面滚动 */
-.app:has(> .notes-wrap) > .stage {
-  min-height: 300px;
-}
-
-/* 选择器比 NotesPanel 的 scoped 样式（`.notes-input[data-v-x]`）多一层，稳赢 */
+/* 选择器比 NotesPanel 的 scoped 样式（`.notes-input[data-v-x]`）多一层，稳赢。
+   内嵌进左栏之后输入框要比"整行"时更矮，代码区才留得住高度。 */
 .notes-wrap .notes-body .notes-input {
-  min-height: 96px;
-  max-height: 34vh;
+  min-height: 56px;
+  max-height: 18vh;
 }
 
 /* 窄屏：代码 / 动画本来就是上下两行，笔记区再放高就更挤了 */
 @media (max-width: 1080px) {
+  .notes-wrap {
+    max-height: 30vh;
+  }
+
   .notes-wrap .notes-body .notes-input {
-    min-height: 84px;
-    max-height: 26vh;
+    min-height: 52px;
+    max-height: 16vh;
   }
 }
 
