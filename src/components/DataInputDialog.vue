@@ -111,7 +111,12 @@ defineExpose({ open, close, visible })
 
         <div class="data-quick">
           <button class="chip" type="button" @click="resetToCurrent">用当前数据</button>
-          <button class="chip" type="button" @click="text = '5, 2, 9, 1, 7, 3'">示例：5, 2, 9, 1, 7, 3</button>
+          <!--
+            这里原来还有一个「示例：5, 2, 9, 1, 7, 3」的可点击小按钮，点了会往输入框里塞一组示例数字。
+            已经去掉：示例在同一个弹窗里**本来就出现两次**（上面 auth-hint 里的「例如」、输入框的 placeholder），
+            再放一个能点的按钮既重复、又会在用户只是想看看格式时把输入框内容覆盖掉。
+            现在示例只作展示，不能点、也不会改输入框里的内容。
+          -->
         </div>
 
         <div class="auth-actions">
