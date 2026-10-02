@@ -321,7 +321,6 @@ defineExpose({ openPanel, open })
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="搜索算法（名称或 id，跨全部大类）"
           aria-label="搜索算法"
           @keydown="onSearchKeydown"
         />
