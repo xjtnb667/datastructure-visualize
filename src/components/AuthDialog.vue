@@ -151,13 +151,8 @@ const title = computed(() => (mode.value === 'login' ? '登录' : '注册新账�
         <button class="auth-close" type="button" title="关闭" @click="close">✕</button>
       </div>
 
-      <p class="auth-hint">
-        {{
-          mode === 'login'
-            ? '登录后可以收藏算法、查看自己的学习记录。'
-            : '注册一个账号，收藏和学习进度会保存在服务器上，换台电脑也还在。'
-        }}
-      </p>
+      <!-- 说明文字只在登录页出现（注册页那句话已按要求删掉，不留空容器撑间距） -->
+      <p v-if="mode === 'login'" class="auth-hint">登录后可以收藏算法、查看自己的学习记录。</p>
 
       <!-- 登录 -->
       <form v-if="mode === 'login'" class="auth-form" @submit.prevent="submitLogin">

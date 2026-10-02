@@ -28,14 +28,15 @@ http://localhost:5173/
 - 前提：电脑上装过 Node.js（到 <https://nodejs.org/zh-cn> 下载 LTS 版本，一路下一步即可）。
   **后端不需要装数据库** —— 用的是 Node 自带的 SQLite，数据库就是 `server/data/app.db` 这一个文件。
 - **管理员账号**：`admin` / `（已移除的旧口令）`（第一次启动时自动创建）。**正式使用请登录后立刻改密码。**
-- ⚠️ **只跑前端（`npm run dev`）不带后端的话，收藏 / 登录这些功能会报错**（接口 404 / 连不上后端）—— 但**看算法、播放动画完全不受影响**，因为算法本来就在浏览器里跑。
+- ✅ **不想双击 bat 也行：命令行里直接 `npm run dev` 就够了** —— 它现在会**自动把后端一起带起来**（启动时先探一下 3000 端口：**已经在跑就跳过**，没跑就自己起一个，日志里写清楚是哪一种；所以 `启动项目.bat` 依旧可用，不会重复起）。**Vite 一关，它起的那个后端也一起收掉**，不留孤儿进程。
+- 想回到"只跑前端"的老样子：`NO_AUTO_SERVER=1 npm run dev` —— 那样登录 / 收藏 / 后台会报"连不上后端服务"（接口 404），但**看算法、播放动画完全不受影响**，因为算法本来就在浏览器里跑。
 
 ## 二、手工命令（开发者用）
 
 ```bash
 npm install       # 安装依赖
-npm run dev       # 只启动前端开发服务器 —— http://localhost:5173/（不含后端）
-npm run server    # 只启动后端 —— http://localhost:3000/api
+npm run dev       # 启动前端 —— http://localhost:5173/（会自动把后端 3000 一起带起来；NO_AUTO_SERVER=1 可关掉）
+npm run server    # 只启动后端 —— http://localhost:3000/api（前后端分开跑时用）
 npm run build     # 生产构建（会先跑类型检查）
 npm test          # 跑全部自动化测试：前端 704 项（Vitest）+ 后端 55 个用例（node:test）= 759 项
 npm run test:server   # 只跑后端那 55 个用例（server/test/，跑在临时库 + 随机端口上）
