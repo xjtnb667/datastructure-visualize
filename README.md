@@ -37,7 +37,8 @@ npm install       # 安装依赖
 npm run dev       # 只启动前端开发服务器 —— http://localhost:5173/（不含后端）
 npm run server    # 只启动后端 —— http://localhost:3000/api
 npm run build     # 生产构建（会先跑类型检查）
-npm test          # 运行单元测试（704 项）
+npm test          # 跑全部自动化测试：前端 704 项（Vitest）+ 后端 54 个用例（node:test）= 758 项
+npm run test:server   # 只跑后端那 54 个用例（server/test/，跑在临时库 + 随机端口上）
 npm run typecheck
 ```
 
@@ -138,10 +139,17 @@ npm run typecheck
 
 ```
 server/                    后端（零新增依赖：只用 node:http / node:sqlite / node:crypto）
-├── index.mjs        HTTP 服务 + 路由分发 + 静态文件（174 行）
+├── index.mjs        HTTP 服务 + 路由分发 + 静态文件（233 行；导出 createApp / startServer，import 时不监听端口）
 ├── api.mjs          19 个业务接口 + 路由表（认证 4 / 用户功能 6 / 管理员 8 / 公开 1）（582 行）
 ├── auth.mjs         密码加盐哈希、会话令牌、注册登录、角色与入参校验（211 行）
-├── db.mjs           建 5 张表、导入算法元数据种子、参数绑定查询（347 行）
+├── db.mjs           建 5 张表、导入算法元数据种子、参数绑定查询（358 行；库路径可用 DB_PATH 覆盖）
+├── test/            后端自动化测试（54 个用例，1330 行，零新增依赖：node:test）
+│   ├── helpers.mjs                  起一个隔离的测试服务：%TEMP% 临时库 + listen(0) 随机端口
+│   ├── auth.node-test.mjs           注册 / 登录 / 令牌 / 过期 / 退出（11 个用例）
+│   ├── permissions.node-test.mjs    权限边界：401 / 403 / 不能删自己 / 最后一个管理员（11 个）
+│   ├── user.node-test.mjs           收藏与学习记录、改昵称改密码（10 个）
+│   ├── admin.node-test.mjs          统计、搜索分页、算法增删改查与上下架（10 个）
+│   └── validation.node-test.mjs     参数校验、目录穿越、SQL 注入、未知接口（12 个）
 └── data/app.db      SQLite 数据文件（一个文件就是整个数据库；不进版本库，删掉下次启动自动重建）
 
 src/
@@ -205,10 +213,10 @@ src/
 | --- | --- | --- |
 | **前端** | Vue 3 · TypeScript · Vite · Pinia · CodeMirror 6 · D3（`d3-scale`）· HTML5 Canvas | 算法在**浏览器里跑**，所以动画与代码高亮的同步不受网络影响 |
 | **前端路由** | 自己写的极简 hash 路由（`src/router.ts`，97 行） | 只有 3 个页面，**不引入 vue-router**，保持零新增依赖 |
-| **后端** | Node 原生 `node:http` + `node:sqlite` + `node:crypto`（`server/` 4 个文件，约 1300 行） | **一个第三方包都没加**；没有 Express、没有 ORM |
+| **后端** | Node 原生 `node:http` + `node:sqlite` + `node:crypto`（`server/` 4 个文件，约 1380 行） | **一个第三方包都没加**；没有 Express、没有 ORM |
 | **数据库** | SQLite（单文件 `server/data/app.db`，5 张表） | 不用安装、不用配服务，但是真数据库（SQL / 事务 / 索引） |
 | **密码与会话** | `crypto.scrypt` 加盐哈希 + 32 字节随机令牌（7 天） | 密码不存明文；比对用 `timingSafeEqual` |
-| **测试** | Vitest —— **704 项全绿** | 全部在前端（算法步骤序列与播放状态）；后端暂无自动化测试 |
+| **测试** | 前端 Vitest **704 项** + 后端 `node:test` **54 个用例** = **758 项全绿** | 前端管算法步骤序列与播放状态，后端管接口：权限边界 / 参数校验 / 数据隔离 / SQL 注入与目录穿越。`npm test` 前后端一起跑，`npm run test:server` 只跑后端；后端用 `%TEMP%` 临时库 + 随机端口，**不碰** `server/data/app.db` |
 
 **取舍要说清楚**：不用框架和 ORM，换来的是"双击就能跑、零安装、故障面小"；代价是路由分发、参数校验、建表都要自己写，而且 SQLite 只适合单机小规模（要上高并发第一件要换的就是它）。详见《毕业设计答辩-问题与修复清单.md》第一部分第 6 条。
 
