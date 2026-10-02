@@ -14,6 +14,7 @@ import AlgorithmPicker from '@/components/AlgorithmPicker.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import AuthDialog from '@/components/AuthDialog.vue'
 import FavoritesView from '@/views/FavoritesView.vue'
+import HomeView from '@/views/HomeView.vue'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { useUserStore, difficultyText } from '@/stores/user'
 import { normalizeHash, useRoute } from '@/router'
@@ -107,7 +108,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  // 地址栏归位（空地址 / 写错的地址都纠正成 #/），再问服务器"我是谁"、拉算法元数据
+  // 地址栏归位（空地址 / 写错的地址都纠正成首页 `#/`），再问服务器"我是谁"、拉算法元数据
   normalizeHash()
   void userStore.init()
   void userStore.loadAlgorithmMeta()
@@ -121,7 +122,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <header class="topbar">
+    <!--
+      顶栏（logo + 算法选择器 + 用户区）。
+      首页（`#/`）**不显示顶栏** —— 落地页要干净，而且还没进算法界面，
+      "算法 / 数据规模"这些选择器也没有意义。首页自己的右上角单独放了一个 `<UserMenu />`
+      （见 HomeView.vue），所以两处**不会同时出现**。
+    -->
+    <header v-if="route !== 'home'" class="topbar">
       <div class="brand">
         <img class="logo" :src="logoUrl" alt="算法可视化平台" />
         <div>
@@ -149,13 +156,16 @@ onBeforeUnmount(() => {
       <UserMenu />
     </header>
 
+    <!-- 首页（落地页）：大字标题 + 进入学习的按钮 -->
+    <HomeView v-if="route === 'home'" />
+
     <!-- 学习记录 / 收藏 -->
-    <FavoritesView v-if="route === 'favorites'" />
+    <FavoritesView v-else-if="route === 'favorites'" />
 
     <!-- 管理员后台：按需加载，只有切到 #/admin 才会去取这段代码 -->
     <AdminView v-else-if="route === 'admin'" />
 
-    <!-- 主界面：算法可视化 -->
+    <!-- 主界面：算法可视化（`#/learn`） -->
     <template v-else>
       <main class="stage">
         <section class="pane">

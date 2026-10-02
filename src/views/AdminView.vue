@@ -92,7 +92,8 @@ onBeforeUnmount(() => {
           📚 算法管理
         </button>
       </div>
-      <button class="btn ghost back-btn" @click="navigate('/')">← 回首页</button>
+      <!-- `#/` 现在是首页了，算法界面在 `#/learn`；这里保持"一键回到算法界面"的老行为 -->
+      <button class="btn ghost back-btn" @click="navigate('/learn')">← 回学习界面</button>
     </div>
 
     <div class="admin-body">
@@ -111,7 +112,7 @@ onBeforeUnmount(() => {
               : '当前还没有登录。请先用管理员账号登录，再从右上角头像菜单里点「后台管理」。'
           }}
         </p>
-        <button class="btn primary" @click="navigate('/')">回首页</button>
+        <button class="btn primary" @click="navigate('/learn')">回学习界面</button>
       </div>
 
       <template v-else>

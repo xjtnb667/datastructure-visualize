@@ -18,6 +18,28 @@ export interface User {
   role: 'user' | 'admin'
   disabled: number
   created_at: number
+  /**
+   * 自定义头像：**图片的 data URL**（如 `data:image/jpeg;base64,...`）。
+   * 没设置就是 `null`（界面显示昵称首字的圆形占位）。
+   * 由用户在「更换头像」弹窗里选图 → 前端压到 128×128 → 再上传，见 `AvatarDialog.vue`。
+   */
+  avatar?: string | null
+}
+
+/**
+ * 头像的两条硬规矩：**只收图片的 data URL**，base64 正文最多 200KB。
+ * 服务端有一份一模一样的校验（`server/api.mjs` 的 `assertAvatar`），这里这份
+ * 只是让前端**先挡一道**、不用等一个来回才知道图片太大 —— 真正的把关在服务端。
+ */
+export const AVATAR_MAX_BASE64 = 200 * 1024
+
+/** `data:image/(png|jpeg|jpg|webp|gif);base64,` 开头才算头像 */
+export const AVATAR_DATA_URL_RE = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,/
+
+/** 取 data URL 里 base64 正文的字符数（不是图片的字节数，但足够用来卡上限） */
+export function avatarBase64Length(dataUrl: string): number {
+  const comma = dataUrl.indexOf(',')
+  return comma < 0 ? 0 : dataUrl.length - comma - 1
 }
 
 export interface AlgoMeta {
@@ -225,6 +247,8 @@ export async function updateMe(patch: {
   nickname?: string
   oldPassword?: string
   newPassword?: string
+  /** 头像：data URL 字符串表示设置，`null` 表示清除（恢复成昵称首字占位） */
+  avatar?: string | null
 }): Promise<User> {
   return request<User>('PATCH', '/auth/me', patch)
 }
@@ -284,7 +308,14 @@ export async function adminListUsers(
 
 export async function adminUpdateUser(
   id: number,
-  patch: { nickname?: string; role?: string; disabled?: number; password?: string },
+  patch: {
+    nickname?: string
+    role?: string
+    disabled?: number
+    password?: string
+    /** 传 `null` 表示清空这个用户的头像（后台"清空头像"用） */
+    avatar?: string | null
+  },
 ): Promise<User> {
   return request<User>('PATCH', `/admin/users/${id}`, patch)
 }

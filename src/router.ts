@@ -7,19 +7,27 @@ import { ref, watch, type Ref } from 'vue'
  *   1. hash 变化浏览器**不会重新请求页面**，所以本地静态服务（Vite / 后端静态目录）
  *      不需要为 `/favorites` 这种路径配任何 rewrite 规则；
  *   2. 直接把地址复制给别人也能打开同一个页面（答辩演示时省事）；
- *   3. 代码量小到一眼能看完 —— 这个项目总共就三个页面，不值得为它加一个依赖。
+ *   3. 代码量小到一眼能看完 —— 这个项目总共就四个页面，不值得为它加一个依赖。
  *
  * 路由表：
- *   #/            主界面（算法可视化）
+ *   #/            首页（落地页：大字标题 + 进入学习的按钮）
+ *   #/learn       算法学习界面（算法可视化主界面）
  *   #/favorites   我的收藏 + 学习记录
  *   #/admin       管理员后台
+ *
+ * ⚠️ `#/` 曾经就是算法学习界面，加了首页之后它让给了首页，
+ * 算法界面搬到 `#/learn`。所以**旧地址 `#/` 不再直接进算法界面**。
  */
 
-export type RouteName = 'home' | 'favorites' | 'admin'
+export type RouteName = 'home' | 'learn' | 'favorites' | 'admin'
 
-/** 地址 -> 路由名。带了别的东西（比如 `#/favorites?x=1`）也照样认得出来 */
+/**
+ * 地址 -> 路由名。带了别的东西（比如 `#/favorites?x=1`）也照样认得出来。
+ * 认不出来的地址（空地址 / `#/fav` / 乱写）一律**回落首页**，不是算法界面。
+ */
 export function routeNameFromHash(hash: string): RouteName {
   const path = hash.replace(/^#/, '').replace(/^\/*/, '/').split('?')[0]!.replace(/\/+$/, '')
+  if (path === '/learn') return 'learn'
   if (path === '/favorites') return 'favorites'
   if (path === '/admin') return 'admin'
   return 'home'
@@ -28,6 +36,7 @@ export function routeNameFromHash(hash: string): RouteName {
 /** 路由名 -> 地址（`navigate` 用；`home` 就是这个平台的默认地址） */
 export const ROUTE_PATHS: Record<RouteName, string> = {
   home: '/',
+  learn: '/learn',
   favorites: '/favorites',
   admin: '/admin',
 }
@@ -53,6 +62,7 @@ if (typeof window !== 'undefined') {
 /** 路由名 -> 给用户看的页面标题（浏览器的标签页标题用得上） */
 const TITLES: Record<RouteName, string> = {
   home: '算法可视化平台',
+  learn: '算法学习 · 算法可视化平台',
   favorites: '我的收藏与学习记录 · 算法可视化平台',
   admin: '后台管理 · 算法可视化平台',
 }
@@ -81,8 +91,8 @@ export function useRoute(): { route: Ref<RouteName> } {
 }
 
 /**
- * 把地址栏归位到路由表里认识的形式：`#/`、`#/favorites`、`#/admin`。
- * 空地址（首次打开）或写错的地址（`#/fav`）都会被纠正，
+ * 把地址栏归位到路由表里认识的形式：`#/`、`#/learn`、`#/favorites`、`#/admin`。
+ * 空地址（首次打开）或写错的地址（`#/fav`）都会被纠正**到首页**，
  * 免得用户对着一个"什么都不显示"的地址发懵。
  */
 export function normalizeHash(): void {

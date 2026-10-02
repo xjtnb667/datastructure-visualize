@@ -52,7 +52,8 @@ db.exec(`
     salt          TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user',
     disabled      INTEGER NOT NULL DEFAULT 0,
-    created_at    INTEGER NOT NULL
+    created_at    INTEGER NOT NULL,
+    avatar        TEXT
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -93,6 +94,33 @@ db.exec(`
     PRIMARY KEY (user_id, algo_key)
   );
 `)
+
+// ---------------------------------------------------------------------------
+// 表结构升级（**幂等**，绝不删表重建）
+//
+// 交付物是"用户已经在用的那个库"，所以加字段**不能**靠删库重建 ——
+// 那会把用户、收藏、学习记录、后台改过的算法元数据一起清掉。
+// 这里的做法只有一句：查 `PRAGMA table_info`，**缺哪列才加哪列**。
+// 于是它在三种情况下都安全：
+//   ① 全新库 —— 上面的 CREATE TABLE 里已经带了这一列，这里什么都不做；
+//   ② 老库（表是旧结构、没有这一列）—— 补一次 ALTER TABLE，已有数据原样保留；
+//   ③ 已经升过级的库 —— 同样什么都不做（再跑多少次都一样，这就是"幂等"）。
+//
+// 表名 / 列名都是本文件里的字面量常量，不是用户输入，所以这里拼接是安全的
+// （其余 SQL 一律参数绑定，见下面的 prepare(...).run(?)）。
+// ---------------------------------------------------------------------------
+export function ensureColumn(table, column, definition) {
+  const exists = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((c) => c.name === column)
+  if (exists) return false
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  return true
+}
+
+/** users.avatar：自定义头像（存 data URL，如 `data:image/png;base64,...`；NULL = 没设置，界面显示昵称首字） */
+export const addedAvatarColumn = ensureColumn('users', 'avatar', 'TEXT')
 
 // ---------------------------------------------------------------------------
 // 算法元数据种子

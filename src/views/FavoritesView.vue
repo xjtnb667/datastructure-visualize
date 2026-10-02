@@ -11,7 +11,7 @@ import { difficultyText, useUserStore } from '@/stores/user'
  * 「我的收藏 + 学习记录」。
  *
  * 两个区块各自独立：
- *   我的收藏 —— 收藏过的算法，点一下回到主界面并选中它（地址栏也跟着变回 `#/`）
+ *   我的收藏 —— 收藏过的算法，点一下回到算法界面并选中它（地址栏跟着变成 `#/learn`）
  *   学习记录 —— 每个算法一行：打开几次 / 最多看到第几步 / 一共几步，表头可以排序
  *
  * 数据全部来自 `useUserStore`：收藏是登录后拉下来的；学习记录既有拉下来的，
@@ -146,7 +146,8 @@ function openAlgorithm(id: string): void {
     return
   }
   algoStore.selectAlgorithm(spec.id)
-  navigate('/')
+  // 算法界面在 `#/learn`（`#/` 现在是首页了）
+  navigate('/learn')
 }
 
 async function toggleFavorite(id: string): Promise<void> {
@@ -171,14 +172,14 @@ onMounted(() => {
           🕘 学习记录（{{ store.history.length }}）
         </button>
       </div>
-      <button class="btn ghost back-btn" @click="navigate('/')">← 回到算法界面</button>
+      <button class="btn ghost back-btn" @click="navigate('/learn')">← 回到算法界面</button>
     </div>
 
     <!-- 没登录：说清楚为什么是空的，并给一个回主界面的入口 -->
     <div v-if="!store.isLoggedIn" class="empty">
       <p class="empty-title">还没有登录</p>
       <p class="empty-tip">登录之后，收藏的算法和看到第几步都会记在你的账号里，换台电脑也还在。</p>
-      <button class="btn primary" @click="navigate('/')">去看算法</button>
+      <button class="btn primary" @click="navigate('/learn')">去看算法</button>
     </div>
 
     <!-- 我的收藏 -->
@@ -188,7 +189,7 @@ onMounted(() => {
         <p class="empty-tip">
           在算法界面点标题右边的 ☆（星标）就能收藏，下次直接从这儿点回来。
         </p>
-        <button class="btn primary" @click="navigate('/')">去看算法</button>
+        <button class="btn primary" @click="navigate('/learn')">去看算法</button>
       </div>
 
       <ul v-else class="fav-list">
@@ -212,7 +213,7 @@ onMounted(() => {
       <div v-if="historyRows.length === 0" class="empty">
         <p class="empty-title">还没有学习记录</p>
         <p class="empty-tip">打开任意一个算法看上几步，这里就会记下你看到哪儿了。</p>
-        <button class="btn primary" @click="navigate('/')">去看算法</button>
+        <button class="btn primary" @click="navigate('/learn')">去看算法</button>
       </div>
 
       <table v-else class="history-table">

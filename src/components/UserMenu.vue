@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import AuthDialog from '@/components/AuthDialog.vue'
+import AvatarDialog from '@/components/AvatarDialog.vue'
 import { navigate } from '@/router'
 import { useUserStore } from '@/stores/user'
 
@@ -10,9 +11,12 @@ import { useUserStore } from '@/stores/user'
  * 三种长相：
  *   ① 还没问完服务器"我是谁"（`ready === false`）—— 一个占位，避免顶栏闪一下再变；
  *   ② 游客 —— 一个「登录 / 注册」按钮；
- *   ③ 已登录 —— 头像 + 昵称，点开下拉菜单（我的收藏 / 学习记录 / 后台管理 / 退出登录）。
+ *   ③ 已登录 —— 头像 + 昵称，点开下拉菜单（我的收藏 / 学习记录 / 更换头像 / 后台管理 / 退出登录）。
  *      其中「后台管理」只有 `role === 'admin'` 才出现
  *      （前端藏着只是为了不难看，后端每个管理接口都会再查一次角色）。
+ *
+ * 头像那 24px 的圆：**有自定义头像就显示图片，没有就显示昵称第一个字**（`store.avatarText`）。
+ * 两种情况都显示在同一个 `.user-avatar` 里，所以切换时顶栏不会跳一下。
  */
 
 const store = useUserStore()
@@ -20,6 +24,7 @@ const store = useUserStore()
 const open = ref(false)
 const rootEl = ref<HTMLDivElement | null>(null)
 const authDialog = ref<InstanceType<typeof AuthDialog> | null>(null)
+const avatarDialog = ref<InstanceType<typeof AvatarDialog> | null>(null)
 
 function toggle(): void {
   open.value = !open.value
@@ -33,6 +38,10 @@ function run(action: () => void): void {
 
 function openAuthDialog(tab: 'login' | 'register' = 'login'): void {
   authDialog.value?.open(tab)
+}
+
+function openAvatarDialog(): void {
+  avatarDialog.value?.open()
 }
 
 async function onLogout(): Promise<void> {
@@ -73,7 +82,10 @@ onBeforeUnmount(() => {
     <!-- ③ 已登录 -->
     <template v-else>
       <button class="user-trigger" :class="{ open }" @click="toggle">
-        <span class="user-avatar">{{ store.avatarText }}</span>
+        <span class="user-avatar">
+          <img v-if="store.hasAvatar" class="avatar-img" :src="store.avatarUrl" alt="头像" />
+          <template v-else>{{ store.avatarText }}</template>
+        </span>
         <span class="user-name">{{ store.displayName }}</span>
         <span v-if="store.isAdmin" class="user-role">管理员</span>
         <span class="user-caret">▾</span>
@@ -95,6 +107,10 @@ onBeforeUnmount(() => {
           <span class="count">{{ store.history.length }}</span>
         </button>
 
+        <button class="dropdown-item" @click="run(openAvatarDialog)">
+          <span class="ico">🖼</span> 更换头像
+        </button>
+
         <button
           v-if="store.isAdmin"
           class="dropdown-item"
@@ -113,6 +129,8 @@ onBeforeUnmount(() => {
 
     <!-- 弹窗挂在用户区里，跟着它一起出现；点收藏触发的登录框也用它 -->
     <AuthDialog ref="authDialog" />
+    <!-- 「更换头像」弹窗（下拉菜单里那一项打开它） -->
+    <AvatarDialog ref="avatarDialog" />
   </div>
 </template>
 
@@ -161,6 +179,8 @@ onBeforeUnmount(() => {
   background: #222a36;
 }
 
+/* 有自定义头像时里面是一张 <img>（全局 .avatar-img 把它裁成圆并铺满），
+   没有时就是昵称首字。overflow: hidden 保证图片不会溢出这个圆。 */
 .user-avatar {
   width: 24px;
   height: 24px;
@@ -172,6 +192,7 @@ onBeforeUnmount(() => {
   color: #ffffff;
   background: #3f6fd8;
   border-radius: 50%;
+  overflow: hidden;
 }
 
 .user-name {

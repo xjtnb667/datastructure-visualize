@@ -11,6 +11,7 @@ import {
   register as apiRegister,
   removeFavorite,
   reportHistory,
+  updateMe as apiUpdateMe,
   type AlgoMeta,
   type HistoryItem,
   type User,
@@ -71,8 +72,12 @@ export const useUserStore = defineStore('user', () => {
   const isAdmin = computed(() => user.value?.role === 'admin')
   /** 昵称拿不到就退回用户名，顶栏永远有东西显示 */
   const displayName = computed(() => user.value?.nickname || user.value?.username || '')
-  /** 顶栏头像用：昵称第一个字 */
+  /** 顶栏头像用：昵称第一个字（**没有自定义头像时**的圆形占位） */
   const avatarText = computed(() => displayName.value.slice(0, 1) || '游')
+  /** 自定义头像的 data URL；没设置就是空串（界面按"显示首字占位"处理） */
+  const avatarUrl = computed(() => user.value?.avatar ?? '')
+  /** 有没有自定义头像 —— 顶栏和后台列表都靠它决定"显示图片还是显示首字" */
+  const hasAvatar = computed(() => avatarUrl.value.length > 0)
   const favoriteKeys = computed<string[]>(() => [...favorites.value])
   /** 按算法 key 索引学习记录，方便视图里 O(1) 取 */
   const historyMap = computed(
@@ -193,6 +198,26 @@ export const useUserStore = defineStore('user', () => {
       favoriteTimes.value = new Map()
       history.value = []
       callSeq++ // 丢掉可能在飞的旧请求
+    }
+  }
+
+  // ---------- 自定义头像 ----------
+  /**
+   * 设置 / 清除自定义头像。
+   *
+   * `avatar` 传 data URL 字符串表示设置，传 `null` 表示**恢复默认**（清除）。
+   * ⚠️ 传进来的字符串必须是**前端已经压到 128×128 的 JPEG**（见 `AvatarDialog.vue`），
+   * 否则几 MB 的原图会直接进数据库（服务端另有 200KB 上限兜底）。
+   *
+   * 成功后用**后端返回的用户对象**整体刷新 store，顶栏、后台列表立刻跟着变；
+   * 失败抛 Error，`error.message` 就是后端给的中文说明（界面直接显示）。
+   */
+  async function updateAvatar(avatar: string | null): Promise<void> {
+    busy.value = true
+    try {
+      user.value = await apiUpdateMe({ avatar })
+    } finally {
+      busy.value = false
     }
   }
 
@@ -408,6 +433,8 @@ export const useUserStore = defineStore('user', () => {
     isAdmin,
     displayName,
     avatarText,
+    avatarUrl,
+    hasAvatar,
     favoriteKeys,
     historyMap,
     historySorted,
@@ -423,6 +450,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     register,
     logout,
+    updateAvatar,
     toggleFavorite,
     reportView,
     errorText,

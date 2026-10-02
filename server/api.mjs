@@ -86,6 +86,58 @@ function likeParam(q) {
   return `%${String(q).replace(/[\\%_]/g, (c) => `\\${c}`)}%`
 }
 
+/**
+ * 自定义头像的校验（服务端把关，不能只靠前端）。
+ *
+ * 只接受**图片的 data URL**：`data:image/png;base64,...` 这种。
+ * 为什么必须卡这么严（而不是"随便存个字符串"）：
+ *   1. 这个字段会原样回给前端、塞进 `<img src="...">`。要是放行 `javascript:` /
+ *      `data:text/html;...`，等于给所有人开了一个存脚本载荷的地方；
+ *   2. 前端上传前已经用 canvas 压到 **128×128 的 JPEG**（正常只有几 KB），
+ *      所以 200KB 的上限非常宽松 —— 它挡的是"往数据库里塞几 MB"。
+ * 约定：`null` / `''` 表示**清除**（存 NULL），不是错误。
+ */
+const AVATAR_PREFIX_RE = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,/
+const AVATAR_BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/
+const MAX_AVATAR_BASE64 = 200 * 1024
+
+function assertAvatar(value) {
+  if (value === null || value === '') return null
+  if (typeof value !== 'string') {
+    throw new HttpError(400, '头像必须是图片的 data URL 字符串，或 null（表示清除头像）')
+  }
+  const raw = value.trim()
+  if (raw === '') return null
+  if (!AVATAR_PREFIX_RE.test(raw)) {
+    throw new HttpError(400, '头像格式不对：只支持 PNG / JPEG / WebP / GIF 图片')
+  }
+  const base64 = raw.slice(raw.indexOf(',') + 1)
+  if (!AVATAR_BASE64_RE.test(base64)) {
+    throw new HttpError(400, '头像内容不是合法的 base64 图片数据')
+  }
+  if (base64.length > MAX_AVATAR_BASE64) {
+    throw new HttpError(
+      400,
+      `头像太大了：压缩后的图片不能超过 ${MAX_AVATAR_BASE64 / 1024}KB，请换一张小一点的图片`,
+    )
+  }
+  return raw
+}
+
+/**
+ * 在用户对象上补一个 `avatar`。
+ *
+ * `auth.mjs` 的 `publicUser()` 是**白名单**式的（只挑 id / username / …），
+ * 这是安全上的好习惯，头像因此不在里面。本文件不动认证模块，
+ * 统一在下面几个出口过一遍 `withAvatar()`，保证"用户对象"形状一致：
+ * 注册、登录、`GET /api/auth/me` 都能拿到 avatar，没设置就是 `null`。
+ */
+function withAvatar(user) {
+  if (!user) return user
+  const row = db.prepare('SELECT avatar FROM users WHERE id = ?').get(user.id)
+  return { ...user, avatar: row?.avatar ?? null }
+}
+
 function paging(searchParams) {
   const page = toInt(searchParams.get('page'), 'page', { min: 1, fallback: 1 })
   const size = toInt(searchParams.get('size'), 'size', { min: 1, max: MAX_PAGE_SIZE, fallback: 20 })
@@ -94,7 +146,9 @@ function paging(searchParams) {
 
 function findUser(id) {
   const row = db
-    .prepare('SELECT id, username, nickname, role, disabled, created_at FROM users WHERE id = ?')
+    .prepare(
+      'SELECT id, username, nickname, role, disabled, created_at, avatar FROM users WHERE id = ?',
+    )
     .get(id)
   if (!row) throw new HttpError(404, '用户不存在')
   return plain(row)
@@ -110,11 +164,12 @@ function findAlgorithm(id) {
 // 认证
 // ---------------------------------------------------------------------------
 function authRegister({ body }) {
-  return registerUser(body)
+  return withAvatar(registerUser(body))
 }
 
 function authLogin({ body }) {
-  return loginUser(body)
+  const result = loginUser(body)
+  return { token: result.token, user: withAvatar(result.user) }
 }
 
 function authLogout({ req }) {
@@ -124,12 +179,14 @@ function authLogout({ req }) {
 }
 
 function authMe({ user }) {
-  return publicUser(user)
+  return withAvatar(publicUser(user))
 }
 
 function authUpdateMe({ req, user, body }) {
   const patch = {}
   if (body.nickname !== undefined) patch.nickname = assertNickname(body.nickname)
+  // 头像：data URL 字符串表示设置，null / '' 表示清除（校验见 assertAvatar）
+  if (body.avatar !== undefined) patch.avatar = assertAvatar(body.avatar)
 
   const wantsPassword = body.newPassword !== undefined && body.newPassword !== ''
   if (wantsPassword) {
@@ -261,7 +318,7 @@ function adminListUsers({ query }) {
   const items = plainAll(
     db
       .prepare(
-        `SELECT id, username, nickname, role, disabled, created_at FROM users ${where}
+        `SELECT id, username, nickname, role, disabled, created_at, avatar FROM users ${where}
           ORDER BY id LIMIT ? OFFSET ?`,
       )
       .all(...args, size, offset),
@@ -275,6 +332,9 @@ function adminUpdateUser({ params, body }) {
 
   const patch = {}
   if (body.nickname !== undefined) patch.nickname = assertNickname(body.nickname)
+
+  // 管理员也能清掉 / 换掉某个用户的头像：传 null（或 ''）即恢复默认（显示昵称首字）
+  if (body.avatar !== undefined) patch.avatar = assertAvatar(body.avatar)
 
   if (body.role !== undefined) {
     const role = String(body.role)

@@ -21,6 +21,10 @@ import { useUserStore } from '@/stores/user'
  *
  * 另外两种"删不掉"的情况在界面上提前打了招呼（见 `deleteTitle` 和 `leavesAdmin`）：
  * 自己的那一行删除按钮直接是灰的；编辑管理员时只要动了角色 / 状态就给出提醒。
+ *
+ * 头像列：有自定义头像显示小圆图（`row.avatar` 是 data URL），
+ * 没有就显示"昵称第一个字"的圆形占位 —— 和顶栏那条规则完全一致。
+ * 编辑弹窗里能**清空**某个用户的头像（后端 `PATCH /api/admin/users/:id` 传 `avatar: null`）。
  */
 
 const store = useUserStore()
@@ -43,7 +47,7 @@ const error = ref('')
 const editing = ref<User | null>(null)
 const saving = ref(false)
 const dialogError = ref('')
-const form = ref({ nickname: '', role: 'user', disabled: false, password: '' })
+const form = ref({ nickname: '', role: 'user', disabled: false, password: '', clearAvatar: false })
 
 // ---------- 删除确认 ----------
 const deleting = ref<User | null>(null)
@@ -135,6 +139,7 @@ function openEdit(row: User): void {
     role: row.role,
     disabled: row.disabled === 1,
     password: '',
+    clearAvatar: false,
   }
 }
 
@@ -142,7 +147,16 @@ function closeEdit(): void {
   editing.value = null
   dialogError.value = ''
   form.value.password = ''
+  form.value.clearAvatar = false
 }
+
+/** 头像列 / 编辑弹窗里的占位字：昵称拿不到就退回用户名，和顶栏一个规则 */
+function avatarLetter(row: User): string {
+  return (row.nickname || row.username || '?').slice(0, 1)
+}
+
+/** 编辑弹窗里那个头像预览：点了"清空"就按"没有头像"显示（保存后才真的清） */
+const editingAvatar = computed(() => (form.value.clearAvatar ? null : editing.value?.avatar ?? null))
 
 /**
  * 这次修改会不会让一个"可用管理员"不再是管理员。
@@ -183,13 +197,21 @@ async function save(): Promise<void> {
     return
   }
 
-  const patch: { nickname?: string; role?: string; disabled?: number; password?: string } = {}
+  const patch: {
+    nickname?: string
+    role?: string
+    disabled?: number
+    password?: string
+    avatar?: string | null
+  } = {}
   if (nickname !== before.nickname) patch.nickname = nickname
   if (form.value.role !== before.role) patch.role = form.value.role
   if ((form.value.disabled ? 1 : 0) !== before.disabled) {
     patch.disabled = form.value.disabled ? 1 : 0
   }
   if (form.value.password) patch.password = form.value.password
+  // 清空头像：只有本来有头像、且这次确实点了"清空"才提交（后端对 null 是"清除"语义）
+  if (form.value.clearAvatar && before.avatar) patch.avatar = null
   if (Object.keys(patch).length === 0) {
     dialogError.value = '没有修改任何内容'
     return
@@ -273,6 +295,7 @@ onMounted(() => {
       <thead>
         <tr>
           <th class="col-id">ID</th>
+          <th class="col-avatar">头像</th>
           <th>用户名</th>
           <th>昵称</th>
           <th>角色</th>
@@ -284,6 +307,11 @@ onMounted(() => {
       <tbody>
         <tr v-for="row in items" :key="row.id">
           <td class="mono">{{ row.id }}</td>
+          <td class="col-avatar">
+            <!-- 有自定义头像显示图片，没有就是昵称首字（和顶栏同一条规则） -->
+            <img v-if="row.avatar" class="avatar-img row-avatar" :src="row.avatar" alt="头像" />
+            <span v-else class="row-avatar row-avatar-text">{{ avatarLetter(row) }}</span>
+          </td>
           <td class="mono">
             {{ row.username }}
             <span v-if="isSelf(row)" class="me-tag">我自己</span>
@@ -314,7 +342,7 @@ onMounted(() => {
           </td>
         </tr>
         <tr v-if="items.length === 0">
-          <td class="table-empty" colspan="7">{{ emptyText }}</td>
+          <td class="table-empty" colspan="8">{{ emptyText }}</td>
         </tr>
       </tbody>
     </table>
@@ -374,6 +402,43 @@ onMounted(() => {
         <p v-if="form.password" class="hint">
           改完密码，这个用户当前的登录会立刻失效，需要用新密码重新登录。
         </p>
+
+        <!-- 头像：只能在这里"清空"（换头像要用户自己在右上角换）。
+             没有头像的用户不显示这一块，免得给一个永远点不动的按钮。 -->
+        <div v-if="editing?.avatar" class="field">
+          <span>头像</span>
+          <div class="avatar-edit">
+            <img v-if="editingAvatar" class="avatar-img avatar-edit-img" :src="editingAvatar" alt="头像" />
+            <span v-else class="avatar-edit-img avatar-edit-text">
+              {{ editing ? avatarLetter(editing) : '' }}
+            </span>
+            <button
+              v-if="!form.clearAvatar"
+              class="btn ghost tiny"
+              type="button"
+              :disabled="saving"
+              @click="form.clearAvatar = true"
+            >
+              清空头像
+            </button>
+            <button
+              v-else
+              class="btn ghost tiny"
+              type="button"
+              :disabled="saving"
+              @click="form.clearAvatar = false"
+            >
+              撤销清空
+            </button>
+          </div>
+          <p class="hint">
+            {{
+              form.clearAvatar
+                ? '保存后这个用户的头像会恢复成昵称的第一个字。'
+                : '这里只支持清空。用户想换头像，可以在页面右上角的下拉菜单里自己换。'
+            }}
+          </p>
+        </div>
 
         <p v-if="leavesAdmin" class="warn">
           注意：系统至少要保留一个可用的管理员。如果这是最后一个管理员，保存会被拒绝。
@@ -499,6 +564,50 @@ onMounted(() => {
 
 .col-id {
   width: 56px;
+}
+
+/* ---------- 头像列 ---------- */
+.col-avatar {
+  width: 52px;
+}
+
+/* 图片和"首字占位"是同一个尺寸的圆，列表里一行的高度不会因为有没有头像而变 */
+.row-avatar {
+  width: 26px;
+  height: 26px;
+}
+
+.row-avatar-text {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #3f6fd8;
+  border-radius: 50%;
+}
+
+/* ---------- 编辑弹窗里的头像块（只能清空，换头像由用户自己换） ---------- */
+.avatar-edit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar-edit-img {
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+
+.avatar-edit-text {
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #3f6fd8;
+  border-radius: 50%;
 }
 
 .col-ops {

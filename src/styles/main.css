@@ -604,3 +604,109 @@ body {
   margin-top: 2px;
 }
 
+/* ---------- 更换头像弹窗 ---------- */
+/* 弹窗本体沿用登录框那套（.auth-mask / .auth-dialog / .auth-head / .auth-close /
+   .auth-error / .auth-actions），这里只补"预览区 + 选图按钮"这几块新东西 ——
+   于是它和登录框、后台弹窗的长相天然一致，改一处两处都跟着变。 */
+.avatar-dialog {
+  max-width: 420px;
+}
+
+.avatar-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.avatar-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 4px 0 16px;
+}
+
+.avatar-preview {
+  width: 96px;
+  height: 96px;
+  flex: none;
+  display: block;
+  object-fit: cover;
+  background: #1b212b;
+  border: 1px solid #2c3542;
+  border-radius: 50%;
+}
+
+/* 没有自定义头像时的占位：和顶栏那个"昵称首字"是同一个长相（蓝底白字圆） */
+.avatar-placeholder {
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #3f6fd8;
+}
+
+.avatar-side {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* 「选择图片」是个 <label>，真正的 <input type="file"> 藏在里面铺满、透明 ——
+   这样按钮长相直接用现成的 .btn，也不用 JS 去 trigger click()。 */
+.avatar-pick {
+  position: relative;
+  align-self: flex-start;
+  padding: 7px 14px;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.avatar-pick input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.avatar-pick:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.avatar-size {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #7d8694;
+}
+
+/* "还没保存"的提醒：和后台"最后一个管理员"那条同色系，是提醒不是报错 */
+.avatar-tag {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #f5c04a;
+}
+
+/* 圆形头像图片：顶栏用户区、后台用户列表共用（正方形图裁成圆） */
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+/* ==========================================================================
+ * 首页（落地页，`#/`）
+ * 标题、副标题、规模说明和「进入学习-->」按钮的样式都写在 HomeView.vue 的 scoped 块里
+ * （只有首页用得上，没必要进全局表）。
+ * 这里只放一条全局相关的：首页**没有顶栏**（App.vue 里 v-if 摘掉了），`.app` 的 12px
+ * 纵向间距会白留一条缝，所以首页在场时把间距收成 0 ——
+ * 选择器带 `.home`，只对首页生效，不影响别的页面。
+ * ========================================================================== */
+.app:has(> .home) {
+  gap: 0;
+}

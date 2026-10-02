@@ -18,10 +18,13 @@ after(async () => {
   await ctx.close()
 })
 
-/** 给前端的用户对象**只能有**这几个字段（password_hash / salt 绝不能出现） */
-const PUBLIC_USER_KEYS = ['created_at', 'disabled', 'id', 'nickname', 'role', 'username']
+/**
+ * 给前端的用户对象**只能有**这几个字段（password_hash / salt 绝不能出现）。
+ * `avatar` 是自定义头像的 data URL（没设置就是 null）—— 见 server/test/avatar.node-test.mjs。
+ */
+const PUBLIC_USER_KEYS = ['avatar', 'created_at', 'disabled', 'id', 'nickname', 'role', 'username']
 
-test('注册成功：返回的用户对象只有 6 个公开字段，没有 password_hash / salt', async () => {
+test('注册成功：返回的用户对象只有 7 个公开字段，没有 password_hash / salt', async () => {
   const username = uniqueName('reg')
   const res = await ctx.api('POST', '/api/auth/register', {
     body: { username, nickname: '注册测试', password: 'pass123' },
