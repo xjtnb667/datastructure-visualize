@@ -16,3 +16,6 @@ server/data/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# submission zip generated on demand
+*.zip
