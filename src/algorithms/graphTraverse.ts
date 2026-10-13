@@ -1613,7 +1613,7 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     category: 'graph',
     group: '拓扑排序',
     summary:
-      '反复挑出入度为 0 的顶点输出：每输出一个，该顶点和以它为起点的出边一起从图上消失，后继入度减 1（图下挂着入度表和已输出的板子）',
+      '反复挑出入度为 0 的顶点输出：每输出一个，该顶点和以它为起点的出边一起从图上消失，后继入度减 1',
     complexity: { time: 'O(n + e)，n 是顶点数、e 是边数', space: 'O(n)，入度表和栈 / 队列' },
     renderer: 'graph',
     codeLines: CODE_TOPO,
