@@ -87,6 +87,21 @@ function boardStyle(b: BoardView): Record<string, string> {
 }
 
 /**
+ * 格子落在网格的第几行第几列。
+ *
+ * 只对**显式写了 row / col** 的格子生效（哈希表要"桶号占第一行、元素挂在桶号正下方"）；
+ * 没写的格子返回空对象，仍旧按 items 顺序从左到右折行 ——
+ * 矩阵 / 稀疏矩阵 / DP 二维表走的都是那条路，这里不能碰。
+ */
+function cellPlace(b: BoardView, it: { row?: number; col?: number }): Record<string, string> {
+  if (b.layout !== 'grid') return {}
+  const style: Record<string, string> = {}
+  if (it.row !== undefined) style.gridRow = String(it.row)
+  if (it.col !== undefined) style.gridColumn = String(it.col)
+  return style
+}
+
+/**
  * 元素从哪一侧滑进来。
  * 竖排默认从上方；横排/折行默认从左侧（绝大多数表都是从左往右填）。
  * 但共享栈的栈2 是从右端往左长的，它的格子必须显式声明 'right'。
@@ -280,6 +295,7 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
             :key="k"
             class="cell-wrap"
             :class="`ptr-${b.layout}`"
+            :style="cellPlace(b, it)"
           >
             <div
               class="cell"

@@ -317,8 +317,8 @@ const CODE_HASH = [
 ]
 
 /**
- * 哈希桶板：一个桶占 2 格 —— 上面一格是桶号，下面一格是桶里那条链。
- * 链上的值用 '-' 连起来，按插入顺序显示（这样"后来者接在后面"一眼可见）。
+ * 哈希桶板：桶号占第一行（表头样式），桶里那条链**竖着挂在桶号正下方**（同一个列）。
+ * 空桶下面就是空的，不留占位格；链多长就挂多长，从上到下就是插入顺序。
  * hot = 正在盯着看的桶；found = 桶里的这个值就是答案；collide = 这个桶上刚发生过冲突。
  */
 function hashBoard(
@@ -327,24 +327,47 @@ function hashBoard(
 ): BoardView {
   const collide = new Set(opts.collide ?? [])
   const items: CellItem[] = []
+
+  // 第一行：桶号。平时是 dim（矩阵那种表头格的样子）；
+  // 桶上正有状态时（正在看的 / 刚冲突过的 / 命中在它链上）才染上状态色，
+  // 否则"算出来的桶号是空的"那几帧就一点提示都没有了。
   for (let i = 0; i < HASH_M; i++) {
     const chain = buckets[i] ?? []
-    const hasFound = chain.includes(opts.found ?? -1)
     const tone: CellTone =
-      opts.hot === i ? 'hot' : hasFound ? 'done' : collide.has(i) ? 'mark' : 'base'
-    items.push({ text: String(i), sub: '桶', tone })
-    items.push({
-      text: chain.length ? chain.join('-') : '',
-      sub: chain.length ? `${chain.length} 个` : '空',
-      tone: chain.length ? tone : 'dim',
-    })
+      opts.hot === i
+        ? 'hot'
+        : collide.has(i)
+          ? 'mark'
+          : opts.found !== undefined && chain.includes(opts.found)
+            ? 'done'
+            : 'dim'
+    items.push({ text: String(i), tone, row: 1, col: i + 1 })
   }
+
+  // 第二行往下：桶里的元素，各挂在自己桶号的那一列上。逐个上色，命中的那个才是绿的。
+  const deepest = Math.max(0, ...buckets.map((c) => c?.length ?? 0))
+  for (let k = 0; k < deepest; k++) {
+    for (let i = 0; i < HASH_M; i++) {
+      const key = buckets[i]?.[k]
+      if (key === undefined) continue
+      const tone: CellTone =
+        key === opts.found
+          ? 'done'
+          : opts.hot === i
+            ? 'hot'
+            : collide.has(i)
+              ? 'mark'
+              : 'base'
+      items.push({ text: String(key), tone, row: k + 2, col: i + 1 })
+    }
+  }
+
   return {
     title: `哈希表 ht[0..${HASH_M - 1}]　除留余数法 key % ${HASH_M} + 链地址法，桶里挂单链表`,
     layout: 'grid',
     cols: HASH_M,
     items,
-    note: opts.note ?? '每桶两格：上面是桶号，下面是桶里那条链（- 连接的顺序就是插入顺序）',
+    note: opts.note ?? '第一行是桶号；桶里的元素竖着挂在各自桶号的正下方，从上到下就是插入顺序',
   }
 }
 
