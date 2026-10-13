@@ -782,7 +782,11 @@ const CODE_DIJKSTRA = [
   '}',
 ]
 
-/** dist + S 板：每格是 dist（共 n 格），已确定的标绿，正在松弛的边另一端标紫 */
+/**
+ * dist 板：每格**大字是顶点名、小字是当前 dist**（共 n 格），已确定的标绿，正在松弛的边另一端标紫。
+ * 和拓扑排序的入度表同一套写法（名字在上、数值在下）：
+ * "这个顶点确定了没有"由**格子的绿色**表达，不再挤一行 S=0 / S=1 的小字。
+ */
 function distBoard(
   g: UGraph,
   dist: number[],
@@ -793,8 +797,8 @@ function distBoard(
   const items: CellItem[] = g.ids.map((_, k) => {
     const v = k + 1
     return {
-      text: inf(dist[k]!),
-      sub: `S=${done.has(v) ? 1 : 0}`,
+      text: V(v),
+      sub: inf(dist[k]!),
       tone: done.has(v) ? 'done' : hot.includes(v) ? 'hot' : 'base',
     }
   })
@@ -802,7 +806,7 @@ function distBoard(
   const cur = hot.find((v) => v >= 1 && v <= items.length)
   if (cur !== undefined) pointers.当前 = cur - 1
   return rowBoard(
-    'dist[] —— 起点到每个顶点的当前最短距离（sub 是"是否已确定"）',
+    'dist[] —— 起点到每个顶点的当前最短距离（大字是顶点名，小字是当前 dist；绿格 = 已确定）',
     items,
     pointers,
     note,
