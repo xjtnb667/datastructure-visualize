@@ -372,9 +372,12 @@ const pointerLabels = computed(() => {
         >{{ p.name }}</div>
       </div>
       </div>
-    </div>
 
-    <p v-if="tv.note" class="tree-note">{{ tv.note }}</p>
+      <!-- note 放进滚动区里（不是 .scroller 的兄弟）：树画得矮时它就落在树下面那片空白里、
+           不用滚也完整可见；树很高时它在滚动内容末尾，滚到底可见。
+           放在外面会多占 24px，把 .scroller 撑出 .pane-body 的 overflow: hidden 之外，只露半行。 -->
+      <p v-if="tv.note" class="tree-note">{{ tv.note }}</p>
+    </div>
 
     <!-- 栈 / 队列 / 存储结构等板子：接在树下面 -->
     <div v-if="hasBottomBoards" class="boards-slot">
@@ -423,9 +426,12 @@ const pointerLabels = computed(() => {
   padding-bottom: 6px;
 }
 
-/* 树下面的栈 / 队列 / 存储结构板子：固定 40%，装不下就在这块里滚动 */
+/* 树下面的栈 / 队列 / 存储结构板子：固定 40%，装不下就在这块里滚动。
+   flex-shrink: 1 + min-height: 0：上下两块板子 + 那行 note 一起超出时，只能压缩板子槽，
+   不能让槽盒子顶出 .pane-body（overflow: hidden）—— 否则槽最底下的 note 永远滚不到。 */
 .boards-slot {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
   height: 40%;
   overflow: auto;
   border-top: 1px solid #232a35;

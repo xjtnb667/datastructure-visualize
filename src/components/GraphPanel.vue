@@ -372,7 +372,11 @@ const badges = computed(() => {
 }
 
 .boards-slot {
-  flex: 0 0 auto;
+  /* flex-shrink: 1 + min-height: 0：图下面还有一行 .graph-note（24px），
+     这 24px 必须由板子槽自己让出来，否则槽盒子会被顶出 .pane-body（overflow: hidden），
+     槽最底下那条（板子的 note）就永远滚不到了。图画布仍是 flex: 0 0 60%。 */
+  flex: 0 1 auto;
+  min-height: 0;
   /* 固定 40%（原来是 max-height: 55% 按内容长，会把图画布挤得上下跳），装不下就内部滚动 */
   height: 40%;
   overflow: auto;

@@ -295,7 +295,11 @@ watch([currentStepIndex, steps], () => {
 }
 
 .boards-slot {
-  flex: 0 0 auto;
+  /* flex-shrink: 1 + min-height: 0：板子槽只能「压缩自己」来腾地方（比如下面还有一行 note 时），
+     绝不允许自己的盒子顶到 .pane-body 的 overflow: hidden 外面去 —— 那样槽底部那条
+     （板子的 note 就贴在最底下）永远滚不到。主区仍是 flex: 0 0 60%，动画不会上下跳。 */
+  flex: 0 1 auto;
+  min-height: 0;
   /* 固定高度（原来是 max-height: 46% 按内容长，把柱状图挤得上下跳）：
      这个算法只要有板子就永远占这么多，装不下就在里面滚动 */
   height: 40%;
