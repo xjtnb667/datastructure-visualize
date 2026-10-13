@@ -52,7 +52,7 @@ npm install       # 安装依赖
 npm run dev       # 启动前端 —— http://localhost:5173/（会自动把后端 3000 一起带起来；NO_AUTO_SERVER=1 可关掉）
 npm run server    # 只启动后端 —— http://localhost:3000/api（前后端分开跑时用）
 npm run build     # 生产构建（会先跑类型检查）
-npm test          # 跑全部自动化测试：前端 728 项（Vitest）+ 后端 102 个用例（node:test）= 830 项
+npm test          # 跑全部自动化测试：前端 782 项（Vitest）+ 后端 102 个用例（node:test）= 884 项
 npm run test:server   # 只跑后端那 102 个用例（server/test/，跑在临时库 + 随机端口上）
 npm run typecheck
 ```
@@ -90,6 +90,10 @@ npm run typecheck
 > 选了算法之后，代码区 / 动画区 / 笔记面板 / 控制条才出现。
 > 为什么不默认选中冒泡排序：那次"自动选中"会被学习记录当成**一次真实学习**记进数据库
 > （用户根本没看，记录里却多出一条）。这条已经固化成 6 条常驻回归用例（`src/stores/learnSelection.spec.ts`）。
+>
+> 顺带一句：**打开界面点两下就能发现的问题，自动化测试不一定拦得住** —— 用户肉眼找出的十几处
+> "动画在说假话"（板子上的字指向一个不存在的东西、动画干了代码没干的事……）全部躲过了当时已有的
+> 800 多条测试，而其中**能自动化的部分现在已经固化成 33 条新用例**（见第五节「测试」那一行）。
 
 ### 游客能做什么、登录能做什么
 
@@ -168,11 +172,11 @@ npm run typecheck
 
 ```
 server/                    后端（零新增依赖：只用 node:http / node:sqlite / node:crypto）
-├── index.mjs        HTTP 服务 + 路由分发 + 静态文件（233 行；导出 createApp / startServer，import 时不监听端口）
-├── api.mjs          23 个业务接口 + 路由表（认证 4 / 用户功能 10 / 管理员 8 / 公开 1）（757 行，含头像校验、笔记 4 个接口、大类白名单含 dp）
-├── auth.mjs         密码加盐哈希、会话令牌、注册登录、角色与入参校验（211 行）
-├── db.mjs           建 6 张表（users 含 avatar 列、notes 笔记表）、幂等的表结构升级、幂等补齐算法元数据种子（101 条）、参数绑定查询（436 行；库路径可用 DB_PATH 覆盖）
-├── test/            后端自动化测试（102 个用例，2442 行，零新增依赖：node:test）
+├── index.mjs        HTTP 服务 + 路由分发 + 静态文件（214 行；导出 createApp / startServer，import 时不监听端口）
+├── api.mjs          23 个业务接口 + 路由表（认证 5 / 用户功能 10 / 管理员 8）（669 行，含头像校验、笔记 4 个接口、大类白名单含 dp）
+├── auth.mjs         密码加盐哈希、会话令牌、注册登录、角色与入参校验（183 行）
+├── db.mjs           建 6 张表（users 含 avatar 列、notes 笔记表）、幂等的表结构升级、幂等补齐算法元数据种子（101 条）、参数绑定查询（415 行；库路径可用 DB_PATH 覆盖）
+├── test/            后端自动化测试（102 个用例，2097 行，零新增依赖：node:test）
 │   ├── helpers.mjs                  起一个隔离的测试服务：%TEMP% 临时库 + listen(0) 随机端口
 │   ├── auth.node-test.mjs           注册 / 登录 / 令牌 / 过期 / 退出 / 改密码作废其它设备会话（12 个用例）
 │   ├── avatar.node-test.mjs         头像：设置 / 覆盖 / 清除 / 各种非法内容被拒 / 200KB 上限 / 越权（26 个）
@@ -186,8 +190,8 @@ server/                    后端（零新增依赖：只用 node:http / node:sq
 
 src/
 ├── api/
-│   └── client.ts       前端唯一的网络出口（自动带令牌、统一错误提示；23 个接口逐条对应后端）
-├── router.ts           极简 hash 路由（#/ 首页、#/learn 算法界面、#/favorites、#/report 学习报告、#/admin，自己写的，零依赖，94 行）
+│   └── client.ts       前端唯一的网络出口（347 行；自动带令牌、统一错误提示；23 个接口逐条对应后端）
+├── router.ts           极简 hash 路由（#/ 首页、#/learn 算法界面、#/favorites、#/report 学习报告、#/admin，自己写的，零依赖，99 行）
 ├── core/
 │   ├── types.ts        步骤序列的字段规范（StepSchema / AlgorithmSpec / ListView）
 │   ├── categories.ts   算法大类与各大类的图例（10 个）
@@ -254,11 +258,11 @@ src/
 | 层 | 用了什么 | 说明 |
 | --- | --- | --- |
 | **前端** | Vue 3 · TypeScript · Vite · Pinia · CodeMirror 6 · D3（`d3-scale`）· HTML5 Canvas | 算法在**浏览器里跑**，所以动画与代码高亮的同步不受网络影响 |
-| **前端路由** | 自己写的极简 hash 路由（`src/router.ts`，94 行） | 只有 5 个页面（首页 / 算法界面 / 我的收藏 / **学习报告** / 后台），**不引入 vue-router**，保持零新增依赖 |
-| **后端** | Node 原生 `node:http` + `node:sqlite` + `node:crypto`（`server/` 4 个文件，约 1505 行） | **一个第三方包都没加**；没有 Express、没有 ORM |
+| **前端路由** | 自己写的极简 hash 路由（`src/router.ts`，99 行） | 只有 5 个页面（首页 / 算法界面 / 我的收藏 / **学习报告** / 后台），**不引入 vue-router**，保持零新增依赖 |
+| **后端** | Node 原生 `node:http` + `node:sqlite` + `node:crypto`（`server/` 4 个文件，约 1481 行） | **一个第三方包都没加**；没有 Express、没有 ORM |
 | **数据库** | SQLite（单文件 `server/data/app.db`，6 张表；users 含 `avatar` 列、另有 `notes` 笔记表） | 不用安装、不用配服务，但是真数据库（SQL / 事务 / 索引）；加列用**幂等 `ALTER TABLE`**、加表用**幂等 `CREATE TABLE IF NOT EXISTS`**，老库升级不丢数据 |
 | **密码与会话** | `crypto.scrypt` 加盐哈希 + 32 字节随机令牌（7 天） | 密码不存明文；比对用 `timingSafeEqual` |
-| **测试** | 前端 Vitest **728 项** + 后端 `node:test` **102 个用例** = **830 项全绿** | 前端管算法步骤序列与播放状态（`algorithms.spec.ts` 713 + `algorithm.spec.ts` 9），另有 6 项是「进入学习不默认选中算法」的回归用例（`learnSelection.spec.ts`）；后端管接口：权限边界 / 参数校验 / 数据隔离 / SQL 注入与目录穿越 / 改密码作废其它设备会话 / **头像校验与老库升级** / **笔记的一人一条与越权防护**。`npm test` 前后端一起跑，`npm run test:server` 只跑后端；后端用 `%TEMP%` 临时库 + 随机端口，**不碰** `server/data/app.db` |
+| **测试** | 前端 Vitest **782 项** + 后端 `node:test` **102 个用例** = **884 项全绿** | 前端管算法步骤序列与播放状态（`algorithms.spec.ts` 734 + `algorithm.spec.ts` 9），另有 6 项是「进入学习不默认选中算法」的回归用例（`learnSelection.spec.ts`）；**这一轮用户点界面点出来的十几处"动画在说假话"全都躲过了原有的测试**，于是新增 5 个针对性 spec（`countSort` 8 / `hashBoard` 7 / `radixBoard` 7 / `shellSort` 5 / `pointerLabels` 6，共 33 项），这 33 项现在还反过来守着那些修复不被改回去，详见《毕业设计答辩-问题与修复清单.md》**五 · 11**；后端管接口：权限边界 / 参数校验 / 数据隔离 / SQL 注入与目录穿越 / 改密码作废其它设备会话 / **头像校验与老库升级** / **笔记的一人一条与越权防护**。`npm test` 前后端一起跑，`npm run test:server` 只跑后端；后端用 `%TEMP%` 临时库 + 随机端口，**不碰** `server/data/app.db` |
 | **图表** | **没有图表库** —— 学习报告页的图是手画的 | 覆盖率环是 **SVG** 圆（靠虚线长度表达百分比），大类分布条是 **CSS 宽度百分比**；数字全部由 `src/core/report.ts` 的纯函数算出。为"一个环 + 几条横条"引入几百 KB 的库不划算 |
 
 **取舍要说清楚**：不用框架和 ORM，换来的是"双击就能跑、零安装、故障面小"；代价是路由分发、参数校验、建表都要自己写，而且 SQLite 只适合单机小规模（要上高并发第一件要换的就是它）。详见《毕业设计答辩-问题与修复清单.md》第一部分第 6 条。
