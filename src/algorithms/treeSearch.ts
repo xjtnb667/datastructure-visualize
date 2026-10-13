@@ -2,6 +2,8 @@ import type {
   AlgorithmSpec,
   AlgoEvent,
   AlgoRunner,
+  BoardView,
+  CellItem,
   RunnerContext,
   StepAction,
   TreeNodeSnapshot,
@@ -736,6 +738,82 @@ interface Phase {
   id: number
 }
 
+/* ------------------------------------------------------------------ */
+/* 「中序序列」板子                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 关于这块板子为什么**必须存在**（不是"多画一块更好看"）：
+ *
+ * `step.array` 装的就是"当前树的中序序列"，但**只有 `renderer === 'array'` 的算法会把它画出来**
+ * —— 全项目读 `step.array` 的组件只有 `CanvasPanel.vue` 一个，而 `App.vue` 里它是
+ * `v-if="store.renderer === 'array'"`。树类算法的 renderer 是 `'tree'`，走的是 `TreePanel`，
+ * 那里**只画树的结点和父子连线**（`boards` / `tapes` 它接得住，`array` 它不认）。
+ *
+ * 后果：`bst-delete` 每一帧都认认真真算了 `array`、注释里也反复写"中序序列变成 …"，
+ * 但**用户在整个界面上根本看不到这串序列** —— 数据和文字都在，唯独没有画面。
+ * 所以这里把中序序列**显式摆成一块板子**，挂在树下方（`position: 'bottom'`，
+ * 和 `TreePanel` 里"栈 / 队列 / 存储结构接在树下面"是同一个槽位）。
+ *
+ * 格子约定（和拓扑排序的 `indegBoard()` 对齐）：`text` = 关键字，`sub` = 它在序列里的位序。
+ * 已经删掉的结点**不留在板子上** —— 它是"当前树的中序序列"，不是历史记录，
+ * 所以"删了 5，5 就没了、剩下的依然升序"这件事才看得见。
+ */
+interface InorderBoardOpts {
+  /** 板子上要标出来的那个结点（要被删的 p、或正在处理的后继 s） */
+  mark?: number | null
+  /** 格子右下角的小字；不填就显示位序 */
+  markSub?: string
+  /** 关键字正好等于它的格子染成紫（"后继的值就是这个、它就要被搬走 / 摘掉"） */
+  hot?: number | null
+  /**
+   * 值覆盖**已经发生**之后：被删位置上的关键字已经变成新值，格子上打"已顶替"标成绿色。
+   * 和 `preview` 互斥。
+   */
+  replaced?: { at: number; from: number }
+  /**
+   * ⭐ 值覆盖**即将发生**、但树还没被改动的这一帧：
+   * 被删位置上仍写着**旧值**，小字告诉他"马上变成 from"。
+   * 这一帧存在的意义就是把"搬值"和"改结构"掰成两拍 —— 学生最容易以为
+   * "把 s 那个结点整个搬上来"，所以先让他看见"这里还是旧值，下一步才换"。
+   */
+  preview?: { at: number; from: number }
+  note: string
+}
+
+function inorderBoard(t: Bst, opts: InorderBoardOpts): BoardView {
+  const vals = inorderValues(t)
+  // 被删结点此刻在序列里的位置；树是空的时候它已经没了
+  const at = opts.mark === null || opts.mark === undefined ? -1 : inorderIds(t).indexOf(opts.mark)
+  const replacedAt = opts.replaced ? inorderIds(t).indexOf(opts.replaced.at) : -1
+
+  const items: CellItem[] = vals.map((v, k) => {
+    // ① 刚被顶替的那个位置：绿 = 这一删已经落定
+    if (opts.replaced && k === replacedAt) return { text: String(v), sub: '已顶替', tone: 'done' }
+    // ② 即将被顶替的位置：还是旧值，只有小字预告新值（这一格的颜色故意不变，好和下一帧对照）
+    if (opts.preview && k === at && v === opts.preview.from) {
+      return { text: String(v), sub: `→${opts.preview.from}`, tone: 'base' }
+    }
+    // ③ 正在处理的那个结点（要删的 p / 找出来的后继 s）
+    if (k === at) return { text: String(v), sub: opts.markSub ?? '待删', tone: 'hot' }
+    // ④ 和它同值的格子 = 后继的值已经写进来了，被删结点和新值在序列里是挨着的
+    if (opts.hot !== null && opts.hot !== undefined && v === opts.hot) {
+      return { text: String(v), sub: '后继值', tone: 'hot' }
+    }
+    return { text: String(v), sub: String(k + 1), tone: 'base' }
+  })
+
+  return {
+    title: `中序序列（共 ${vals.length} 个，升序）`,
+    position: 'bottom',
+    layout: 'row',
+    items,
+    // 指针下标必须落在 items 范围内：树空了（at < 0）就不给指针
+    pointers: at >= 0 ? { p: at } : undefined,
+    note: opts.note,
+  }
+}
+
 /**
  * 依次挑出三个要删的结点，让三种情况**都能演到**：
  * ① 先删一个叶子；② 删完之后"只剩一个孩子"的那个结点；③ 再找一个有两个孩子的结点。
@@ -778,22 +856,40 @@ function greedyPhases(t: Bst): Phase[] {
   return out
 }
 
-function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
+/**
+ * 二叉排序树 · 删除。三种情况（叶子 / 一个孩子 / 两个孩子）依次各删一个结点。
+ *
+ * 这块算法的重点在**情况③（两个孩子）**，它被拆成一条完整的推理链，逐步演进：
+ *   发现两个孩子 → 说清为什么不能直接摘 → 从右孩子出发一路向左找后继（**每走一步一帧**）
+ *   → 停下来说清"后继 = 比 p 大的数里最小的那个" → ⭐**单独一帧**只讲"值覆盖"
+ *   → 摘掉后继结点（等于情况①/②） → 结果帧：新的中序序列仍然升序
+ *
+ * 另外**每一帧都挂一块「中序序列」板子**（`boards`，`position: 'bottom'`）：
+ * 树类算法的 `array` 在界面上是不渲染的（只有 `renderer === 'array'` 的算法会画），
+ * 所以中序序列必须显式摆出来，用户才看得见"删掉一个关键字，它就从序列里消失、剩下依然升序"。
+ */
+export function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
   // 数据里的关键字全都建进树里（n 个数据 = n 个结点），再依次挑三个删掉
   const keys = distinctKeys(data)
   const t = balancedBst(keys)
   const phases = planDeletes(t) ?? greedyPhases(t)
 
+  /**
+   * 造一帧。`board` 是这块「中序序列」板子的内容说明，**不传也会挂一块默认的**
+   * —— 保证"每一帧都有板子"这条不变量成立，板子不会在动画里忽闪忽现。
+   */
   const frame = (
     line: number,
     action: StepAction,
     comment: string,
     vars: Record<string, number>,
     opts: ViewOpts = {},
+    board: InorderBoardOpts = { note: '当前树的中序序列' },
   ): AlgoEvent => ({
     line,
     action,
     array: inorderValues(t),
+    boards: [inorderBoard(t, board)],
     tree: treeOf(t, opts),
     comment,
     vars,
@@ -806,6 +902,7 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     `先建好一棵二叉排序树，中序序列是 ${inorderValues(t).join(' → ')}。BST 的删除分三种情况，下面依次删 ${intro}`,
     { 结点数: t.nodes.size },
     { hot: [t.root!], note: '① 叶子直接摘 ② 一个孩子顶替 ③ 两个孩子用中序后继顶替' },
+    { note: '中序序列 = 把树"左→根→右"读一遍，BST 的中序序列一定是升序的' },
   )
 
   for (const ph of phases) {
@@ -820,9 +917,9 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       `接下来删 ${tv}（情况${no} ${CASE_NAME[ph.case]}）：先像查找那样从根结点出发把它找出来`,
       { 待删: tv, 结点数: t.nodes.size },
       { hot: [target], pointers: { p: t.root, pre: null }, note: `p 从根开始找 ${tv}` },
+      { mark: target, markSub: `第${inorderValues(t).indexOf(tv) + 1}个`, note: `中序序列里 ${tv} 排在第 ${inorderValues(t).indexOf(tv) + 1} 位，先把它找出来` },
     )
     let cur: number | null = t.root
-    let pre: number | null = null
     while (cur !== null && cur !== target) {
       const n = t.nodes.get(cur)!
       const small = tv < n.v
@@ -831,9 +928,9 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
         'compare',
         `${tv} ${small ? '<' : '>'} ${n.v}：${small ? '往左' : '往右'}孩子找`,
         { 待删: tv },
-        { hot: [cur], pointers: { p: cur, pre }, note: `比较 ${tv} 与 ${n.v}` },
+        { hot: [cur], pointers: { p: cur, pre: parentOf(t, cur) }, note: `比较 ${tv} 与 ${n.v}` },
+        { mark: target, note: `查找不影响中序序列：它始终是 ${inorderValues(t).join(' → ')}` },
       )
-      pre = cur
       cur = small ? n.left : n.right
     }
 
@@ -846,6 +943,7 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
         `${tv} 的左右孩子都是 NULL —— 情况① 叶子结点：把它摘掉就行，不用动别的子树`,
         { 待删: tv, 结点数: t.nodes.size },
         { hot: [target], pointers: { p: target, pre: p }, note: '红色 = 将被删除的结点' },
+        { mark: target, hot: tv, note: `马上要摘掉的是中序序列里的第 ${inorderValues(t).indexOf(tv) + 1} 个格子` },
       )
       if (p === null) t.root = null
       else {
@@ -860,6 +958,7 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
         `删除完成：${p === null ? '树空了' : `把 ${t.nodes.get(p)!.v} 对应的孩子指针置成 NULL`}，中序序列变成 ${inorderValues(t).join(' → ')}`,
         { 结点数: t.nodes.size },
         { hot: p === null ? [] : [p], note: '叶子删掉后，别的结点位置都不用动' },
+        { note: `板子上少了一个格子：${tv} 没了，剩下的 ${inorderValues(t).join(' → ')} 依然升序` },
       )
     } else if (ph.case === 2) {
       // ---------------- 情况②：只有一个孩子，孩子顶替 ----------------
@@ -872,6 +971,7 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
         `${tv} 只有一个孩子 ${cv} —— 情况②：让 ${cv} 直接顶替它的位置，${cv} 下面那棵子树整体上移一层`,
         { 待删: tv, 顶替: cv },
         { hot: [target, child], pointers: { p: target, q: child }, note: '用唯一的孩子顶替' },
+        { mark: target, hot: cv, note: `待删的 ${tv} 在板子上，顶替它的 ${cv} 在右边` },
       )
       if (p === null) t.root = child
       else {
@@ -880,43 +980,127 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
         else pn.right = child
       }
       t.nodes.delete(target)
+      const pv = p === null ? null : t.nodes.get(p)!.v
       yield frame(
         6,
         'set',
-        `删除完成：${cv} 接到了${p === null ? '根的位置' : ` ${t.nodes.get(p)!.v} 的下面`}，中序序列变成 ${inorderValues(t).join(' → ')}（还是升序）`,
+        `删除完成：${cv} 接到了${pv === null ? '根的位置' : ` ${pv} 的下面`}，中序序列变成 ${inorderValues(t).join(' → ')}（还是升序）`,
         { 结点数: t.nodes.size },
         { hot: [child], note: '孩子顶替，BST 性质不变' },
+        { note: `板子上少了一个格子：${tv} 没了，剩下的 ${inorderValues(t).join(' → ')} 依然升序` },
       )
     } else {
       // ---------------- 情况③：有两个孩子，用中序后继顶替 ----------------
-      const s = successorOf(t, target)!
-      const sv = t.nodes.get(s)!.v
+      const lv = t.nodes.get(t.nodes.get(target)!.left!)!.v
+      const rv = t.nodes.get(t.nodes.get(target)!.right!)!.v
+
+      // ③-1 发现 p 有两个孩子：先把"为什么不能直接摘"讲透，再说下一步要干什么
       yield frame(
         7,
         'mark',
-        `${tv} 有两个孩子，不能直接摘：先找它的中序后继 —— 右子树里一路向左到底的那个结点，是 ${sv}（它正好是比 ${tv} 大的数里最小的一个）`,
-        { 待删: tv, 后继: sv },
-        { hot: [target, s], pointers: { p: target, s }, note: 's = 中序后继（统一用后继，不用前驱）' },
+        `${tv} 的左边有 ${lv}、右边有 ${rv} —— 情况③：**有两个孩子，不能直接摘掉**。` +
+          `把 p 从树上拿走，它的两个孩子就同时失去了父结点：${lv} 那棵左子树和 ${rv} 那棵右子树接不到一起去，树会断成两半。` +
+          `所以要用一个"替身"来顶替 p —— 这个替身必须满足：比左子树所有结点都大、比右子树所有结点都小`,
+        { 待删: tv, 左孩子: lv, 右孩子: rv },
+        { hot: [target], pointers: { p: target }, note: '两个孩子 → 不能直接摘，要找替身' },
+        { mark: target, note: `板子上现在还是 ${inorderValues(t).join(' → ')}；替身要能"原地无缝"接住 ${tv} 的位置` },
       )
+
+      // ③-2 后继从 p 的右孩子出发
+      const rightStart = t.nodes.get(target)!.right!
+      const rsv = t.nodes.get(rightStart)!.v
+      yield frame(
+        8,
+        'mark',
+        `能当替身的那个结点叫**中序后继** s：它是"比 ${tv} 大的所有数里最小的一个"。` +
+          `这样的结点一定藏在 ${tv} 的**右子树**里。于是 s 从右孩子 ${rsv} 出发，然后**一路向左走到底**`,
+        { 待删: tv, s: rsv },
+        { hot: [target, rightStart], pointers: { p: target, s: rightStart }, note: 's 从 p 的右孩子出发，准备一路向左' },
+        { mark: target, hot: rsv, note: `s 的候选是 ${rsv}；先站在 ${rv} 这个右孩子上` },
+      )
+
+      // ③-3 ⭐ 一路向左，**每往左走一步都是一帧**
+      let s: number = rightStart
+      let sp: number = target
+      while (t.nodes.get(s)!.left !== null) {
+        sp = s
+        s = t.nodes.get(s)!.left!
+        const sn = t.nodes.get(s)!
+        yield frame(
+          9,
+          'compare',
+          `${t.nodes.get(sp)!.v} 还有左孩子 ${sn.v}：**再往左走一步**，s 变成 ${sn.v}。` +
+            `向左走 = 值在变小，越往左越接近 ${tv}，所以一路向左的尽头就是"比 ${tv} 大的数里最小的那个"`,
+          { 待删: tv, s: sn.v },
+          { hot: [target, s], pointers: { p: target, s, sp }, note: `s 向左走到 ${sn.v}` },
+          { mark: target, hot: sn.v, note: `板子上：s 的候选从 ${t.nodes.get(sp)!.v} 缩到 ${sn.v}（在板子上往左移了一格）` },
+        )
+      }
+
+      const sv = t.nodes.get(s)!.v
+      const sr = t.nodes.get(s)!.right
+      // ③-4 走不动了：s 就是中序后继
+      yield frame(
+        9,
+        'mark',
+        `${sv} 没有左孩子了，向左走不动 —— **s 就停在 ${sv}**。它就是中序后继：比 ${tv} 大的数里最小的那个` +
+          `${sr === null ? '' : `（它还有一个右孩子 ${t.nodes.get(sr)!.v}）`}`,
+        { 待删: tv, 后继: sv },
+        { hot: [target, s], pointers: { p: target, s, sp }, note: 's 停下 = 中序后继找到了' },
+        { mark: target, hot: sv, note: `板子上 ${sv} 就是紧跟在 ${tv} 后面的那个数 —— 这正是"后继"的意思` },
+      )
+
+      // ③-5 ⭐ 值覆盖【单独一帧】：这一步只讲"把值写过去"，先把 s 摘出来
+      const spv = t.nodes.get(sp)!.v
+      yield frame(
+        10,
+        'set',
+        `准备顶替：s 是 ${spv} 的左孩子，把它从原来待着的地方摘下来（${spv} 的左指针改指 ${sr === null ? 'NULL' : `${t.nodes.get(sr)!.v}`}），` +
+          `${sv} 这个值就可以腾出来用了。注意 —— 板子上现在还是旧值 ${tv}，值还没有换`,
+        { 待删: tv, 后继: sv, 结点数: t.nodes.size },
+        { hot: [target, s], pointers: { p: target, s, sp }, note: '先把 s 从它原来的位置摘下来' },
+        { mark: target, hot: sv, note: `板子上暂时还是 ${inorderValues(t).join(' → ')}；下一步才把 ${sv} 写进 ${tv} 那一格` },
+      )
+
+      // ③-6 ⭐ 值覆盖真正发生【单独一帧】：结构一个都没动，只有那一个值变了
       t.nodes.get(target)!.v = sv
       yield frame(
         10,
         'set',
-        `把后继的值 ${sv} 搬进被删结点的位置：这一步只改值、不改结构，所以树里暂时有两个 ${sv}（中序序列里它们挨在一起），问题就转化成"删掉那个后继结点"`,
-        { 待删: sv, 结点数: t.nodes.size },
-        { hot: [target, s], pointers: { p: target, s }, note: '值顶替：先搬值，再摘结点' },
+        `⭐ **把 ${sv} 写进 ${tv} 原来待的那个结点**（` +
+          `板子上第 ${inorderValues(t).indexOf(sv) + 1} 格从 ${tv} 变成了 ${sv}）` +
+          `。这就是"**值覆盖**"：只改了一个 ` +
+          `数字，树的形状、父子连线、左右孩子**一个都没动**。` +
+          `**不是把 s 那个结点整个搬到 ${tv} 的位置上**，结点还在它自己的位置，只是值被"借"走了`,
+        { 待删: tv, 顶替: sv, 结点数: t.nodes.size },
+        { hot: [target, s], pointers: { p: target, s, sp }, note: '值顶替：改的是值，不是结点' },
+        { replaced: { at: target, from: tv }, note: `板子上 ${tv} 那一格换成了 ${sv}；现在树里有两个 ${sv}（板子上相邻两格都是它）` },
       )
-      const sp = parentOf(t, s)!
-      const sr = t.nodes.get(s)!.right
+
+      // ③-7 摘掉 s 那个结点：此时 s 没有左孩子 → 退化成情况①/②
       if (sp === target) t.nodes.get(sp)!.right = sr
       else t.nodes.get(sp)!.left = sr
       t.nodes.delete(s)
       yield frame(
         11,
         'set',
-        `把后继结点本身摘掉：它是右子树里最靠左的，一定没有左孩子，${sr === null ? '也没有右孩子，直接摘' : `用它的右孩子 ${t.nodes.get(sr)!.v} 顶替`} —— 情况③ 删除完成，中序序列 ${inorderValues(t).join(' → ')}`,
+        `${sv} 那个结点自己已经是空壳了，摘掉它：它是右子树里最靠左的，所以**一定没有左孩子**，` +
+          `${sr === null ? '右孩子也没有 —— 退化成情况①（叶子），直接摘' : `只有一个右孩子 ${t.nodes.get(sr)!.v} —— 退化成情况②，用它顶替`}。` +
+          `看到了吧：**"两个孩子"这个难题已经被化简成"一个孩子 / 没有孩子"的难题了**`,
         { 结点数: t.nodes.size },
-        { hot: [target], done: [target], note: '后继顶替 + 摘掉后继 = 完整的删除' },
+        { hot: [target], done: [target], pointers: { p: target }, note: '后继顶替 + 摘掉后继 = 完整的删除' },
+        { mark: target, replaced: { at: target, from: tv }, note: `板子上 ${sv} 只剩下一个了：${inorderValues(t).join(' → ')}，依然升序` },
+      )
+
+      // ③-8 情况③ 自己的结果帧：把"新的中序序列"再明确说一遍
+      yield frame(
+        11,
+        'done',
+        `情况③ 删除完成。板子上：${tv} 那一格现在是顶替上来的 ${sv}，重复的那个 ${sv} 已经摘掉，` +
+          `中序序列变成 ${inorderValues(t).join(' → ')} —— 仍然是升序，BST 性质保住了`,
+        { 结点数: t.nodes.size },
+        { hot: [target], note: `删掉一个关键字之后，中序序列只是"少了一项"` },
+        { replaced: { at: target, from: tv }, note: `对比一下：删之前是 ${tv} 在序列里，删之后这个位置换成了 ${sv}` },
       )
     }
   }
@@ -927,6 +1111,7 @@ function* runBstDelete(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     `删除结束：① 叶子直接摘；② 只有一个孩子时用孩子顶替；③ 有两个孩子时先用中序后继的值顶替、再把后继结点摘掉。剩下的结点中序序列 ${inorderValues(t).join(' → ')} 仍然升序`,
     { 结点数: t.nodes.size },
     { done: [...t.nodes.keys()], note: 'BST 的删除必须保住"中序有序"' },
+    { note: `全程盯住这块板子就能看懂 BST 删除：它**永远保持升序**，删除只是从中拿走一格` },
   )
 }
 
@@ -1433,7 +1618,7 @@ export const treeSearchSpecs: AlgorithmSpec[] = [
     name: '二叉排序树·删除',
     category: 'search',
     group: '二叉排序树',
-    summary: '① 叶子直接摘 ② 一个孩子顶替 ③ 两个孩子用中序后继顶替（再摘掉后继）',
+    summary: '① 叶子直接摘 ② 一个孩子顶替 ③ 两个孩子：找中序后继 → 值覆盖 → 摘掉后继（树下方同步显示中序序列）',
     complexity: { time: '平均 O(log n)，最坏 O(n)', space: 'O(1)' },
     renderer: 'tree',
     codeLines: BST_DELETE_CODE,
@@ -1444,6 +1629,18 @@ export const treeSearchSpecs: AlgorithmSpec[] = [
       `先建一棵二叉排序树（中序序列 ${distinctKeys(data).join(' → ')}，${distinctKeys(data).length} 个结点），然后依次演示删除的三种情况：叶子、只有一个孩子、有两个孩子（每删一个结点数就少一个）`,
     initTree: (data) =>
       treeOf(balancedBst(distinctKeys(data)), { note: '删除的第一步都是"按关键字查找"' }),
+    /**
+     * 首帧（engine 造的那一帧）也要挂上「中序序列」板子。
+     * engine 的首帧只认 `initScene.boards`，`initTree` 里塞不进去 —— 不在这里给的话，
+     * 用户按"上一步"退到第一帧时板子会凭空消失，第 0 帧和第 1 帧看起来不是同一块板子。
+     */
+    initScene: (data) => ({
+      boards: [
+        inorderBoard(balancedBst(distinctKeys(data)), {
+          note: '中序序列 = 把树"左→根→右"读一遍，BST 的中序序列一定是升序的',
+        }),
+      ],
+    }),
     createRunner: runBstDelete,
   },
 

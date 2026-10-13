@@ -7,6 +7,7 @@ import {
   getGroupedByCategory,
 } from './index'
 import { buildSteps, validateSteps } from '@/core/engine'
+import { runBstDelete } from './treeSearch'
 import { CATEGORIES } from '@/core/categories'
 import { SEQ_CAPACITY } from '@/core/config'
 import type {
@@ -15,6 +16,7 @@ import type {
   AlgoStep,
   RendererKind,
   RunnerContext,
+  StepAction,
 } from '@/core/types'
 
 const ascending = (a: number[]) => [...a].sort((x, y) => x - y)
@@ -1410,5 +1412,415 @@ describe('拓扑排序：入度表板子', () => {
     }
     // 默认 9 个顶点有 12 条边 -> 入度正好掉 12 次；写死这个数，note 少写一次就露馅
     expect(drops, '核对过的"入度掉了 1"次数').toBe(12)
+  })
+})
+
+describe('二叉排序树·删除：中序序列板子', () => {
+  const spec = getAlgorithm('bst-delete')
+  const sizes = spec.sizes ?? [7]
+
+  /** 这一帧的「中序序列」板子（找不到返回 undefined，断言里会当场报出来） */
+  const inorderBoardOf = (step: AlgoStep) =>
+    (step.boards ?? []).find((b) => b.title.startsWith('中序序列'))
+
+  /** 把板子读成一串关键字（**格子的正文就是关键字**，小字是它在序列里的位序） */
+  const seqOf = (step: AlgoStep): number[] => {
+    const board = inorderBoardOf(step)
+    if (!board) throw new Error('这一帧没有「中序序列」板子')
+    return board.items.map((it) => Number(it.text))
+  }
+
+  /**
+   * ⭐ 这块板子是这次改动的核心：树类算法的 `array` 在界面上**根本不会渲染**
+   * （全项目只有 CanvasPanel 读 `step.array`，而它是 `v-if="renderer === 'array'"`），
+   * 所以中序序列必须挂在 `boards` 上才看得见。这条用例把"每帧都有、且它就是当前树的中序序列"钉死。
+   */
+  it('每一帧都挂着「中序序列」板子，格子数等于当前树的结点数', () => {
+    let frames = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      expect(steps.length, `${n} 个关键字删除的帧数`).toBeGreaterThan(8)
+      for (const [i, step] of steps.entries()) {
+        const board = inorderBoardOf(step)
+        expect(board, `${n} 个关键字第 ${i} 帧要有「中序序列」板子`).toBeTruthy()
+        expect(board!.layout, `${n} 个关键字第 ${i} 帧的板子布局`).toBe('row')
+        expect(board!.position, `${n} 个关键字第 ${i} 帧的板子位置`).toBe('bottom')
+        // 树上的结点数和板子格子数必须一帧一帧地对得上：删掉一个结点，板子当场少一格
+        expect(board!.items.length, `${n} 个关键字第 ${i} 帧的格子数`).toBe(step.tree!.nodes.length)
+        frames += 1
+      }
+    }
+    // 守卫：一帧都没核对到就说明上面的循环静默空跑了
+    // （5..12 个关键字 × 十来帧，实测 434 帧）
+    expect(frames, '总共核对过的帧数').toBeGreaterThan(150)
+  })
+
+  /**
+   * ⭐⭐ 最值钱的一条：BST 的**中序序列一定是升序**。
+   * 值覆盖那一步会让树里短暂出现两个相同的值（板子上相邻两格），删完之后必须立刻回到**严格**升序
+   * —— 值覆盖写错（比如写成搬结点、或者改错了哪个结点的值）会在这里立刻露出来。
+   */
+  it('板子里的序列必须是升序，而且等于当前树的中序序列', () => {
+    let checked = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      for (const [i, step] of steps.entries()) {
+        const seq = seqOf(step)
+        const treeInorder = walkTree(step.tree!).inorder
+        expect(seq, `${n} 个关键字第 ${i} 帧：板子该是树的中序序列`).toEqual(treeInorder)
+        // 注意：值覆盖那一步会让树里**短暂**出现两个相同的值（板子上相邻两格），
+        // 所以这里只能要求"非递减"；严格升序留给下面那条"删完之后"的用例。
+        expect(seq, `${n} 个关键字第 ${i} 帧：中序序列必须非递减`).toEqual(ascending(seq))
+        checked += 1
+      }
+    }
+    expect(checked, '总共核对过的板子张数').toBeGreaterThan(150)
+  })
+
+  /**
+   * ⭐⭐ 收尾的不变量：三次删除**做完之后**，板子必须是**严格升序、没有重复**的。
+   * 值覆盖那一步故意让树里出现过两个相同的值（那是动画的中间态），所以"唯一性"只能在这一条里查
+   * —— 如果值覆盖之后忘了把多出来的那个结点摘掉，这里会立刻红。
+   */
+  it('三次删除做完之后，板子严格升序而且没有重复值', () => {
+    let checked = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      const last = steps[steps.length - 1]!
+      const seq = seqOf(last)
+      expect(seq, `${n} 个关键字：收尾的中序序列必须严格升序`).toEqual(
+        [...seq].sort((a, b) => a - b),
+      )
+      expect(new Set(seq).size, `${n} 个关键字：收尾的中序序列不该有重复值`).toBe(seq.length)
+      checked += 1
+    }
+    expect(checked, '核对过的收尾帧数').toBe(8)
+  })
+
+  /**
+   * 板子和 `array` 是同一份数据派生的，不该各说各话。
+   * （`array` 现在界面上看不见，但它仍是这块算法的"真值"，将来若接了别的渲染器必须还对得上。）
+   */
+  it('板子里的序列和同一帧的 array 一模一样', () => {
+    let pairs = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      for (const [i, step] of steps.entries()) {
+        expect(seqOf(step), `${n} 个关键字第 ${i} 帧：板子和 array`).toEqual(step.array)
+        pairs += 1
+      }
+    }
+    expect(pairs, '总共比对过的 (帧, array) 对数').toBeGreaterThan(150)
+  })
+
+  it('板子上的指针下标必须落在格子范围内', () => {
+    let pointers = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      for (const [i, step] of steps.entries()) {
+        const board = inorderBoardOf(step)!
+        for (const [name, at] of Object.entries(board.pointers ?? {})) {
+          expect(at, `${n} 个关键字第 ${i} 帧指针 ${name} 的下标`).toBeGreaterThanOrEqual(0)
+          expect(at, `${n} 个关键字第 ${i} 帧指针 ${name} 的下标`).toBeLessThan(board.items.length)
+          pointers += 1
+        }
+      }
+    }
+    expect(pointers, '总共核对过的指针个数').toBeGreaterThan(100)
+  })
+
+  it('每删掉一个结点，板子就少一格（删的是"当前树的中序序列"，不是历史记录）', () => {
+    const steps = buildSteps(spec, prepared(spec), {})
+    // 默认 7 个关键字要删 3 个 -> 板子从 7 格一路缩到 4 格
+    expect(seqOf(steps[0]!), '首帧的板子').toHaveLength(7)
+    expect(seqOf(steps[steps.length - 1]!), '末帧的板子').toHaveLength(4)
+    let shrinks = 0
+    for (let i = 1; i < steps.length; i++) {
+      const before = seqOf(steps[i - 1]!)
+      const now = seqOf(steps[i]!)
+      if (now.length === before.length) continue
+      // 板子只会因为"删掉一个结点"而变短，永远不该变长
+      expect(now.length, `第 ${i} 帧：板子从 ${before.length} 格变成 ${now.length} 格`).toBe(
+        before.length - 1,
+      )
+      shrinks += 1
+    }
+    expect(shrinks, '核对过的"板子少了 1 格"次数').toBe(3)
+  })
+})
+
+describe('二叉排序树·删除：有两个孩子的结点', () => {
+  const spec = getAlgorithm('bst-delete')
+  const sizes = spec.sizes ?? [7]
+
+  const frameOf = (line: number, action: StepAction, text: string) => (s: AlgoStep) =>
+    s.line === line && s.action === action && s.comment.includes(text)
+
+  /** 板子上某一位现在写着谁（板子 = 当前树的中序序列） */
+  const seqOf = (step: AlgoStep): number[] =>
+    ((step.boards ?? []).find((b) => b.title.startsWith('中序序列'))?.items ?? []).map((it) =>
+      Number(it.text),
+    )
+
+  /** 树上所有关键字的多重集合（值覆盖那一步会让它短暂地变成 4 个值） */
+  const multiset = (step: AlgoStep): number[] => [...walkTree(step.tree!).inorder].sort((a, b) => a - b)
+
+  /**
+   * 按**多重集合**做差，返回 `after` 比 `before` 多出来的那些值。
+   * 不能用 `!before.includes(v)` —— 值覆盖恰恰会让 after 里多出一个**before 里已经有的**值
+   * （树里出现两个相同的值），那样写会得到空数组，把自己坑了。
+   */
+  const multisetAdd = (before: number[], after: number[]): number[] => {
+    const rest = [...before]
+    const added: number[] = []
+    for (const v of after) {
+      const at = rest.indexOf(v)
+      if (at >= 0) rest.splice(at, 1)
+      else added.push(v)
+    }
+    return added
+  }
+  const multisetRemove = (before: number[], after: number[]): number[] => multisetAdd(after, before)
+
+  /**
+   * ⭐ "值覆盖"必须是**一步单独的一帧**，而且那一帧要明说"这是值覆盖，不是把结点搬过去"。
+   * 这是学生最容易搞混的地方，所以这里既查"帧在不在"，也查"话说到没说到"。
+   */
+  it('值覆盖单独成帧，而且明说"不是把结点搬过去"', () => {
+    let covers = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      for (const [i, step] of steps.entries()) {
+        if (!step.comment.includes('值覆盖')) continue
+        expect(step.action, `${n} 个关键字第 ${i} 帧（值覆盖）的 action`).toBe('set')
+        expect(step.comment, `${n} 个关键字第 ${i} 帧（值覆盖）该点破"不是把结点搬过去"`).toContain(
+          '不是把',
+        )
+        expect(step.comment, `${n} 个关键字第 ${i} 帧（值覆盖）该说"只改值不改结构"`).toContain(
+          '一个都没动',
+        )
+        covers += 1
+      }
+    }
+    // 守卫：一次都没查到就说明"值覆盖"这个词根本没写进 comment
+    expect(covers, '带「值覆盖」说明的帧数').toBeGreaterThan(5)
+  })
+
+  /**
+   * ⭐ 值覆盖的**实质**：不只看注释，而是看树本身。
+   * 覆盖那一帧，树上关键字的多重集合恰好是"去掉被删的旧值、多出一个后继的值"——
+   * 多出来的那个值就是**紧跟在旧值后面**的那个数（中序后继的定义）。
+   */
+  it('覆盖那一帧：旧值没了、新值正好是多出来的那一个，而且它紧跟在旧值后面', () => {
+    let covers = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      for (let i = 1; i < steps.length; i++) {
+        const prev = steps[i - 1]!
+        const step = steps[i]!
+        if (!step.comment.includes('值覆盖')) continue
+
+        const before = multiset(prev)
+        const after = multiset(step)
+        expect(after.length, `${n} 个关键字第 ${i} 帧（值覆盖）结点数不该变`).toBe(before.length)
+
+        const added = multisetAdd(before, after)
+        const removed = multisetRemove(before, after)
+        expect(added, `${n} 个关键字第 ${i} 帧（值覆盖）：该多出一个值`).toHaveLength(1)
+        expect(removed, `${n} 个关键字第 ${i} 帧（值覆盖）：该少掉一个值`).toHaveLength(1)
+        expect(step.action, `${n} 个关键字第 ${i} 帧（值覆盖）的 action`).toBe('set')
+
+        const sv = added[0]!
+        const tv = removed[0]!
+        expect(sv, `${n} 个关键字第 ${i} 帧：后继必须比被删的 ${tv} 大`).toBeGreaterThan(tv)
+        // "后继 = 比被删结点大的数里最小的那个"：删之前的序列里，sv 就该紧跟在 tv 后面
+        const inorderBefore = walkTree(prev.tree!).inorder
+        expect(
+          inorderBefore[inorderBefore.indexOf(tv) + 1],
+          `${n} 个关键字第 ${i} 帧：删之前 ${sv} 该紧跟在 ${tv} 后面（中序后继的定义）`,
+        ).toBe(sv)
+        // 覆盖只改了一个值：树里因此出现两个 sv，中序序列这时**还是升序**（两个相等的值挨在一起）
+        expect(seqOf(step), `${n} 个关键字第 ${i} 帧：值覆盖后中序序列仍该是升序`).toEqual(
+          ascending(seqOf(step)),
+        )
+        covers += 1
+      }
+    }
+    expect(covers, '核对过实质的"值覆盖"帧数').toBeGreaterThan(5)
+  })
+
+  /**
+   * ⭐ 要求 4："两个孩子的难题被化简成了一个孩子的难题"必须**看得见**。
+   * 摘掉后继那一帧要说明后继**为什么**顶多只有一个孩子（它一路向左到底，所以一定没有左孩子），
+   * 并且说明它退化成情况①还是情况②。
+   */
+  it('摘掉后继那一帧：说清后继一定没有左孩子，并且退化成了情况①/②', () => {
+    let checked = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, prepared(spec).slice(0, n), {})
+      for (const [i, step] of steps.entries()) {
+        if (!step.comment.includes('化简成')) continue
+        expect(step.comment, `${n} 个关键字第 ${i} 帧：该点出后继"一定没有左孩子"`).toContain(
+          '一定没有左孩子',
+        )
+        expect(step.comment, `${n} 个关键字第 ${i} 帧：该说明退化成情况①还是②`).toMatch(
+          /退化成情况[①②]/,
+        )
+        expect(step.tree!.nodes.length, `${n} 个关键字第 ${i} 帧：这一帧结点数该少一个`).toBe(
+          steps[i - 1]!.tree!.nodes.length - 1,
+        )
+        checked += 1
+      }
+    }
+    expect(checked, '核对过的"化简"帧数').toBeGreaterThan(5)
+  })
+
+  /**
+   * 要求 2："一路向左走到底"必须**每走一步都有一帧**。
+   * 帧数随规模变化，所以量出所有规模走出来的步数总和，卡一个下限：
+   * 步数掉到 1 就意味着实现又变回"一步到位"了（那正是这次要修掉的问题）。
+   */
+  it('找后继时每往左走一步都单独成帧', () => {
+    let steps = 0
+    let sizesWithWalk = 0
+    for (const n of sizes) {
+      const runner = buildSteps(spec, prepared(spec).slice(0, n), {})
+      let local = 0
+      for (const step of runner) {
+        if (!step.comment.includes('再往左走一步')) continue
+        expect(step.action, `${n} 个关键字：往左走一步该是 compare`).toBe('compare')
+        expect(step.tree!.pointers?.s, `${n} 个关键字：这一帧该看得见 s 指到哪`).toBeTruthy()
+        expect(step.tree!.pointers?.sp, `${n} 个关键字：这一帧该看得见 s 的父结点`).toBeTruthy()
+        local += 1
+      }
+      if (local > 0) sizesWithWalk += 1
+      steps += local
+    }
+    // 5..12 个关键字一共走出了 9 步"往左走"（见下面的守卫）；掉到 2 步以下说明动画没在走
+    expect(steps, '所有规模加起来"往左走一步"的帧数').toBeGreaterThan(2)
+    expect(sizesWithWalk, '出现过"往左走"动画的规模数').toBeGreaterThan(0)
+  })
+
+  /**
+   * 要求 1 + 3 + 5：情况③ 的推理链一帧不缺 ——
+   * 说明为什么不能直接摘 → 从右孩子出发 → 一路向左 → 说明后继是谁 → 值覆盖（必须紧挨着摘除帧前面）
+   * → 摘掉后继 → 结果帧给出新的中序序列。
+   * 同时守卫帧数：掉回改之前的 3 帧就说明动画被改没了。
+   */
+  it('情况③ 的推理链一帧不缺，而且帧数够多（不能一步到位）', () => {
+    for (const n of sizes) {
+      const all = buildSteps(spec, prepared(spec).slice(0, n), {})
+      const start = all.findIndex(frameOf(7, 'mark', '有两个孩子，不能直接摘'))
+      if (start < 0) continue // 这个规模下 planDeletes 没排出情况③，跳过
+      const rest = all.slice(start)
+      const end = rest.findIndex(frameOf(11, 'done', '情况③ 删除完成'))
+      expect(end, `${n} 个关键字：情况③ 该有一个"删除完成"的结果帧`).toBeGreaterThan(0)
+      const phase = rest.slice(0, end + 1)
+
+      // ① 为什么不能直接摘
+      expect(phase.some(frameOf(7, 'mark', '不能直接摘')), `${n} 个关键字：缺"为什么不能直接摘"`).toBe(
+        true,
+      )
+      // ② 从 p 的右孩子出发
+      expect(phase.some(frameOf(8, 'mark', '一路向左走到底')), `${n} 个关键字：缺"从右孩子出发"`).toBe(
+        true,
+      )
+      // ③ 后继是谁（"比 p 大的数里最小的那个"）
+      expect(phase.some(frameOf(9, 'mark', '比')), `${n} 个关键字：缺"后继是谁"`).toBe(true)
+      // ④ 值覆盖单独一帧，而且**紧挨着**摘掉后继那一帧（两帧之间没有别的动作）
+      const coverIdx = phase.findIndex((s) => s.comment.includes('值覆盖'))
+      expect(coverIdx, `${n} 个关键字：情况③ 里缺"值覆盖"帧`).toBeGreaterThan(0)
+      const cover = phase[coverIdx]!
+      const next = phase[coverIdx + 1]!
+      expect(next.action, `${n} 个关键字：值覆盖的下一帧`).toBe('set')
+      expect(next.comment, `${n} 个关键字：值覆盖之后该立刻摘掉后继`).toContain('化简成')
+      // 值覆盖**之前**那一帧板子上还是旧值 —— 这样"值覆盖"才真的是单独一步
+      const coverAdded = multisetAdd(multiset(phase[coverIdx - 1]!), multiset(cover))
+      expect(coverAdded.length, `${n} 个关键字：值覆盖那一帧该正好新出现一个值`).toBe(1)
+      // ⑤ 结果帧：新序列仍然升序，而且比删之前少一个值
+      expect(seqOf(phase[end]!), `${n} 个关键字：结果帧的中序序列`).toEqual(ascending(seqOf(phase[end]!)))
+      expect(seqOf(phase[end]!).length, `${n} 个关键字：情况③ 删完该少一个值`).toBe(
+        seqOf(phase[0]!).length - 1,
+      )
+      // 守卫：改之前情况③ 只有 3 帧（发现 → 搬值 → 摘掉），现在必须明显多出来
+      expect(phase.length, `${n} 个关键字：情况③ 的帧数`).toBeGreaterThan(6)
+    }
+  })
+
+  /**
+   * 补一条**最少帧数**的硬守卫：单看默认数据，情况③ 里从"发现有两个孩子"到"删除完成"
+   * 之间的帧数是确定的（实测 8 帧）。这个数字是可读的、且远大于 3，改回去就红。
+   */
+  it('默认数据下情况③ 的帧数是 8 帧（改之前是 3 帧）', () => {
+    const all = buildSteps(spec, prepared(spec), {})
+    const start = all.findIndex(frameOf(7, 'mark', '有两个孩子，不能直接摘'))
+    expect(start, '该能找到情况③ 的起始帧').toBeGreaterThan(0)
+    const rest = all.slice(start)
+    const end = rest.findIndex(frameOf(11, 'done', '情况③ 删除完成'))
+    expect(end, '该能找到情况③ 的结果帧').toBeGreaterThan(0)
+    expect(end + 1, '情况③ 的帧数').toBe(8)
+  })
+})
+
+describe('二叉排序树·删除：runBstDelete 直接跑（不经过 registry）', () => {
+  /** 一整段动画压成"每一帧干了什么"的清单，方便按顺序核对 */
+  const traceOf = (input: number[]) => {
+    const out: Array<{ line: number; action: string; comment: string }> = []
+    for (const ev of runBstDelete(input, {})) {
+      out.push({ line: ev.line ?? -1, action: ev.action, comment: ev.comment ?? '' })
+    }
+    return out
+  }
+
+  const findAt = (trace: Array<{ line: number; comment: string }>, line: number, text: string) =>
+    trace.findIndex((f) => f.line === line && f.comment.includes(text))
+
+  /**
+   * 直接驱动 runner，把情况③ 的推理链**按顺序**核一遍：
+   * 发现两个孩子(7) → 从右孩子出发(8) → 一路向左(9, 可能多帧) → 后继是谁(9)
+   * → 准备顶替(10) → ⭐值覆盖(10) → 摘掉后继(11) → 结果(11)。
+   * 这些帧号必须**严格递增**，任何一步被合并掉都会在这里露出来。
+   */
+  it('情况③ 八个阶段的帧号严格递增（一帧都不许少）', () => {
+    const trace = traceOf([10, 20, 30, 40, 50, 60, 70])
+    expect(trace.length, 'runBstDelete 直接跑出来的帧数').toBeGreaterThan(12)
+
+    const found = findAt(trace, 7, '有两个孩子，不能直接摘')
+    const fromRight = findAt(trace, 8, '一路向左走到底')
+    const stop = trace.findIndex((f) => f.line === 9 && f.comment.includes('向左走不动'))
+    const cover = findAt(trace, 10, '值覆盖')
+    const detach = findAt(trace, 11, '化简成')
+    const result = findAt(trace, 11, '情况③ 删除完成')
+
+    for (const [name, at] of Object.entries({ found, fromRight, stop, cover, detach, result })) {
+      expect(at, `缺了"${name}"那一帧`).toBeGreaterThan(-1)
+    }
+    expect(fromRight, '从右孩子出发该在"发现有两个孩子"之后').toBeGreaterThan(found)
+    expect(stop, '后继停下该在从右孩子出发之后').toBeGreaterThan(fromRight)
+    expect(cover, '值覆盖该在后继确定之后').toBeGreaterThan(stop)
+    expect(detach, '摘掉后继该紧跟值覆盖').toBe(cover + 1)
+    expect(result, '结果帧该在摘掉后继之后').toBe(detach + 1)
+
+    // 收尾帧（line 14）只该有一帧，而且就是整段动画的最后一帧
+    const endings = trace.filter((f) => f.line === 14)
+    expect(endings.length, 'line 14 的收尾帧个数').toBe(1)
+    expect(trace[trace.length - 1]!.line, '最后一帧该是收尾帧').toBe(14)
+    // 每一帧都要有话说（engine 通用用例也查这个，这里直接把 runner 自己再钉一遍）
+    expect(trace.every((f) => f.comment.trim().length > 0), '每一帧都该有 comment').toBe(true)
+  })
+
+  /**
+   * 直接跑时也逐帧看一眼注释：line 9 必须出现过、line 10 必须同时有"准备顶替"和"值覆盖"两帧
+   * —— 这两帧挨在一起正是这次改动的重点（先把 s 摘出来，再单独一帧讲值覆盖）。
+   */
+  it('line 10 上有两个连续帧：先"准备顶替"、再"值覆盖"', () => {
+    const trace = traceOf([10, 20, 30, 40, 50, 60, 70])
+    const prep = findAt(trace, 10, '准备顶替')
+    const cover = findAt(trace, 10, '值覆盖')
+    expect(prep, '缺"准备顶替"帧').toBeGreaterThan(-1)
+    expect(cover, '缺"值覆盖"帧').toBeGreaterThan(-1)
+    expect(cover, '值覆盖该紧跟在准备顶替后面').toBe(prep + 1)
+    expect(trace[prep]!.action, '"准备顶替"的 action').toBe('set')
+    expect(trace[cover]!.action, '"值覆盖"的 action').toBe('set')
   })
 })
