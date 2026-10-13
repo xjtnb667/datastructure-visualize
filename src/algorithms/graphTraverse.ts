@@ -50,7 +50,10 @@ import type {
  *   - 竖排（column）第 0 格在**最下面**：`items` 从栈底往栈顶排，最后一格是栈顶，
  *     指针「栈顶」指向最后一格（下标 = 栈长 - 1）；空栈不给指针；
  *   - 横排（row）第 0 格在最左边：`items` 从队首往队尾排，指针「队首」指向第 0 格；
- *     空队列同样不给指针；拓扑排序的「已输出」板子也从第 0 格开始往右一格一格攒。
+ *     空队列同样不给指针；拓扑排序的「已输出」板子也从第 0 格开始往右一格一格攒；
+ *   - 拓扑排序还额外挂一块横排的「入度表」：**每个顶点固定一格**（正文是它当前的入度、
+ *     右下角小字是顶点名）。它是**全顶点**的，所以图上的顶点被删掉之后，
+ *     "它当时的入度是多少、清干净没有"仍然在这张表上看得见。
  *
  * 起点：4 个算法都从 V1 出发（V1 是唯一的"入口"顶点）。
  */
@@ -363,6 +366,41 @@ function topoOutBoard(out: string[]): BoardView {
       tone: i === out.length - 1 ? 'hot' : 'done',
     })),
     note: out.length ? `已经输出的顶点，按先后排：${out.join(' → ')}` : '还没输出任何顶点',
+  }
+}
+
+/**
+ * 「入度表」板子：**每个顶点固定一格**，格子里的数字是它**当前**的入度，右下角小字是顶点名。
+ *
+ * 为什么非要这块板子：顶点旁的黄标签写的是同一个数，但图上的顶点会随着输出**一个个真的被删掉**——
+ * 删掉之后标签也一起没了，"它入度是多少、清干净没有"就再也看不见了。
+ * 这张表是**全顶点**的（已经输出的也在表里），所以一张表就能回答"现在谁还欠着前驱、各欠几个"。
+ * 也正因为它每帧都在、格子数永远一样，入度的变化才是"某个格子里的数字掉了 1"这么直观的事。
+ *
+ * 三种配色正好是顶点在算法里的三种处境：
+ *   hot  —— 这一步入度刚减到 0、马上就要入队（最关键的一拍，用紫色点出来）；
+ *   done —— 已经输出完了（绿色淡掉，一眼看出它不再是待办）；
+ *   base —— 还在等前驱（普通色）。
+ *
+ * `indeg` 的 key 必须覆盖 `allV` 里的每一个顶点（`runTopo` 的 `indegNow()` 保证了这一点）：
+ * 缺谁的 key，那一格就会默默显示 0，看起来像"它的前驱已经都做完了"——是错的。
+ */
+function indegBoard(
+  allV: string[],
+  indeg: Record<string, number>,
+  opts: { out?: string[]; hot?: string; note: string },
+): BoardView {
+  const done = new Set(opts.out ?? [])
+  return {
+    title: `入度表（共 ${allV.length} 个顶点）`,
+    layout: 'row',
+    items: allV.map((v) => ({
+      text: String(indeg[v] ?? 0),
+      sub: v,
+      tone: v === opts.hot ? 'hot' : done.has(v) ? 'done' : 'base',
+    })),
+    // 不给指针：入度表没有"下一个要处理谁"的语义（那是队列板「队首」的活）
+    note: opts.note,
   }
 }
 
@@ -1114,11 +1152,50 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
   }
 
   /**
-   * 每个顶点的当前入度表（key 是**所有**顶点，包括已经删掉的）。
+   * 每个顶点的**当前**入度（key 是**所有**顶点，包括已经删掉的）。
+   *
+   * ⭐ 这是入度的**唯一数据源**：顶点旁的黄标签和「入度表」板子都从这里派生，
+   * 所以两边永远是同一个数 —— 不可能出现"标签写 2、表里写 1"这种两套数据对不上的情况。
    * 已经删掉的那些由 `topoView` 统一滤掉，所以这里不用自己判断。
    */
-  const indegBadges = (): Record<string, string> =>
-    Object.fromEntries(ALL_V.map((v) => [v, `入度${indeg.get(v)}`]))
+  const indegNow = (): Record<string, number> =>
+    Object.fromEntries(ALL_V.map((v) => [v, indeg.get(v) ?? 0] as [string, number]))
+
+  /** 顶点旁的黄标签：值就是 `indegNow()` 里的那个数，只是前面加了"入度"两个字 */
+  const indegBadges = (): Record<string, string> => {
+    const now = indegNow()
+    return Object.fromEntries(ALL_V.map((v) => [v, `入度${now[v]}`] as [string, string]))
+  }
+
+  /**
+   * 上一帧的入度快照 —— 「入度表」板子的 note 靠它写出"这一步入度发生了什么"。
+   *
+   * 用**前后两帧的数据自动对比**，而不是在 8 个 yield 里各手写一句：手写的话，
+   * 一旦某个 yield 忘了写、或者数字写错（比如漏写一次减 1），note 就会和表上的数字打架，
+   * 而且没法用一条通用断言守住。自动 diff 和表是"从同一份数据生成"的，天然不会不一致。
+   */
+  let prevIndeg: Record<string, number> | null = null
+
+  /**
+   * 这一步入度发生了什么。
+   * 只在 `boardPair` 里调用，而 `boardPair` 每个 yield **恰好调一次**，
+   * 所以 `prevIndeg` 一定指向上一帧、不会漏帧也不会重复推进。
+   */
+  const indegNote = (now: Record<string, number>): string => {
+    const before = prevIndeg
+    prevIndeg = now
+    // 首帧没有"上一帧"可比：把初始入度原样报出来（这张表开局就是这个样子）
+    if (!before) return `初始入度：${ALL_V.map((v) => `${v}=${now[v]}`).join('，')}`
+    const changed = ALL_V.filter((v) => before[v] !== now[v])
+    if (!changed.length) return '这一步入度没有变化'
+    return changed
+      .map((v) =>
+        now[v] === 0
+          ? `${v} 的入度 ${before[v]} -> 0，马上入队`
+          : `${v} 的入度 ${before[v]} -> ${now[v]}`,
+      )
+      .join('；')
+  }
 
   /**
    * 造一帧**拓扑排序专用**的图快照 —— 全算法唯一的收口处。
@@ -1170,21 +1247,39 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
     }
   }
 
-  /** 顶点下方的小字：默认"入度见表"（入度的真值写在旁边的黄标签上），个别顶点可以特写 */
+  /**
+   * 顶点下方的小字：默认"入度见表"（表就是下面那块「入度表」板子，
+   * 顶点旁边的黄标签是**同一个值的另一种呈现**），个别顶点可以特写。
+   */
   const subOf =
     (extra: Record<string, string> = {}) =>
     (v: string): string =>
       extra[v] ?? '入度见表'
 
   /**
-   * 这一帧挂的两块板子，**每帧都给**：
-   *   左：「已输出（拓扑序）」—— 每输出一个顶点就接一格，结果全靠它攒着；
-   *   右：「队列」—— 当前入度为 0、等着被输出的顶点，指针「队首」指向第 0 格（空队列不给指针）。
+   * 这一帧挂的三块板子，**每帧都给**（`ScenePanel` 是竖着往下排的，所以下面的顺序 = 从上到下）。
+   *
+   *   1.「入度表」—— 每个顶点固定一格，写它当前的入度（**全顶点**都在，包括已经输出的）；
+   *   2.「已输出（拓扑序）」—— 每输出一个顶点就接一格，结果全靠它攒着；
+   *   3.「队列」—— 当前入度为 0、等着被输出的顶点，指针「队首」指向第 0 格（空队列不给指针）。
+   *
+   * 为什么把入度表排最前面：三块连起来读是"**当前状态 → 结果 → 待办**"——
+   * 入度表就是当前状态（它自己的 note 写的正是"这一步入度发生了什么"），
+   * 读完再往下看已经输出了谁、谁还在排队。而且它离上面的图最近：
+   * 顶点下方的小字写着"入度见表"，那张表就在紧下面。
+   *
+   * 注意入度表的 note 是**自己**算的（这一步入度变化了多少），不受 `opts.note` 影响 ——
+   * `opts.note` 讲的始终是"队列 / 输出"这条线，它只给第 3 块队列板用。
    */
-  const boardPair = (opts: { hot?: string; note: string }): BoardView[] => [
-    topoOutBoard(out),
-    queueBoard(queue, opts),
-  ]
+  const boardPair = (opts: { hot?: string; note: string }): BoardView[] => {
+    const now = indegNow()
+    return [
+      // `opts.hot` 就是"这一步入度刚减到 0、马上要入队"的那个顶点 -> 表上那格点紫色
+      indegBoard(ALL_V, now, { out, hot: opts.hot, note: indegNote(now) }),
+      topoOutBoard(out),
+      queueBoard(queue, opts),
+    ]
+  }
 
   /**
    * 这个顶点的入度是不是**已经归零、并且已经排进队了**（或者已经输出了）。
@@ -1210,7 +1305,7 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       note: `AOV 网：顶点是活动，有向边 u->v 表示 u 必须先于 v；顶点旁的黄标签就是当前入度`,
     }),
     boards: boardPair({ note: `还没开始找：入度为 0 的顶点是 ${zeroInit.join('、')}` }),
-    comment: `① 统计每个顶点的入度，写在顶点旁边的小标签上：${ALL_V.map((v) => `${v} 入度 ${indeg.get(v)}`).join('，')}。只有 ${zeroInit.join('、')} 入度为 0 —— 没有前驱，可以从它开始。这张图一共 ${edges.length} 条边，除了最后的汇点 ${ALL_V[N - 1]}，每个顶点都至少有一条出边，所以每输出一个顶点都能看到"删结点连带删出边"`,
+    comment: `① 统计每个顶点的入度，写在顶点旁边的小标签上，同时也整整齐齐排在下面的「入度表」板子里：${ALL_V.map((v) => `${v} 入度 ${indeg.get(v)}`).join('，')}。只有 ${zeroInit.join('、')} 入度为 0 —— 没有前驱，可以从它开始。这张图一共 ${edges.length} 条边，除了最后的汇点 ${ALL_V[N - 1]}，每个顶点都至少有一条出边，所以每输出一个顶点都能看到"删结点连带删出边"`,
     vars: { n: N, 输出个数: 0, 入度0个数: zeroInit.length, 图上剩余: alive.size },
   }
 
@@ -1285,8 +1380,8 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
       }),
       boards: boardPair({
         note: outs.length
-          ? `${u} 已经输出到左边那块板子上了；图上从此没有 ${u}，它的 ${outs.length} 条出边也一起删掉了`
-          : `${u} 已经输出到左边那块板子上了；它是最后的汇点，没有出边，所以只有它自己从图上消失`,
+          ? `${u} 已经输出到「已输出（拓扑序）」板子上了；图上从此没有 ${u}，它的 ${outs.length} 条出边也一起删掉了`
+          : `${u} 已经输出到「已输出（拓扑序）」板子上了；它是最后的汇点，没有出边，所以只有它自己从图上消失`,
       }),
       comment: outs.length
         ? `④ 输出完立刻把 ${u} 从图里删掉：顶点 ${u} 不见了，以它为起点的 ${outs.length} 条出边（${outEdgeText}）也一起不见了 —— 边是跟着起点走的。剩下顶点的坐标一个都没动，只是图上少了一个人。${u} 是拓扑序列的第 ${out.length} 个，已经记在「已输出」板子的最后一格`
@@ -1347,6 +1442,11 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
           note: `边 ${u}->${w} 刚才已经跟着 ${u} 一起删掉了：${w} 少一个前驱，入度 ${from} -> ${to}`,
         }),
         boards: boardPair({
+          // 刚减到 0 的那一格要在入度表上点紫色（这就是"最关键的一拍"）；
+          // 还没减到 0 的就不点，免得用户以为它已经解锁了。
+          // 注意 w 这一刻**还没进队**（入队是这一轮出边处理完之后的事），
+          // 所以这个 hot 只影响入度表，队列板上找不到它、不会有副作用。
+          hot: to === 0 ? w : undefined,
           note:
             to === 0
               ? `${w} 的入度减到 0 了：它马上要入队`
@@ -1398,14 +1498,16 @@ function* runTopo(data: number[], _ctx: RunnerContext = {}): AlgoRunner {
         ? `所有顶点都输出完了，图上剩 ${alive.size} 个顶点、${liveEdgeKeys().size} 条边；拓扑序列：${out.join(' → ')}`
         : `还有 ${N - out.length} 个顶点没输出：图里有环，拓扑排序失败`,
     }),
-    boards: [
-      topoOutBoard(out),
-      queueBoard([], {
-        note: ok
-          ? '队列空了，所有顶点都输出了：图是有向无环图'
-          : '队列空了但还有顶点没输出：剩下的顶点互相等，成环了',
-      }),
-    ],
+    /*
+     * 收尾帧也照样走 `boardPair`：入度表这块板子**每一帧都在**，
+     * 这里要是手写数组、少写一块，"每帧都有三块板子"这条规矩当场就破了。
+     * 此刻循环已经退出、队列必空，所以 `queueBoard` 拿到的就是空队列，和手写 `[]` 等价。
+     */
+    boards: boardPair({
+      note: ok
+        ? '队列空了，所有顶点都输出了：图是有向无环图'
+        : '队列空了但还有顶点没输出：剩下的顶点互相等，成环了',
+    }),
     comment: ok
       ? `⑥ 队列空了，而且 ${out.length} 个顶点全都输出了 —— 这是一张有向无环图（DAG），拓扑序列是：${out.join(' → ')}。图上现在一个顶点、一条边都不剩：每输出一个顶点，它本人和它的出边就被一起删掉，删到最后正好清空，全部 ${N} 个顶点都按先后排在图下面的「已输出（拓扑序）」板子里。验证一下：每条边都是从前面的顶点指向后面的顶点，没有一个违反先后次序`
       : `⑥ 队列空了，但只输出了 ${out.length} 个顶点，还剩 ${N - out.length} 个没输出（图上红色那些边就是环上的边）—— 说明图里有环，这些顶点互相是对方的前驱，谁也不能先做，拓扑排序失败`,
@@ -1512,7 +1614,7 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
     category: 'graph',
     group: '拓扑排序',
     summary:
-      '反复挑出入度为 0 的顶点输出：每输出一个，该顶点和以它为起点的出边一起从图上消失，后继入度减 1（已输出的排在图下的板子里）',
+      '反复挑出入度为 0 的顶点输出：每输出一个，该顶点和以它为起点的出边一起从图上消失，后继入度减 1（图下挂着入度表和已输出的板子）',
     complexity: { time: 'O(n + e)，n 是顶点数、e 是边数', space: 'O(n)，入度表和栈 / 队列' },
     renderer: 'graph',
     codeLines: CODE_TOPO,
@@ -1525,18 +1627,28 @@ export const graphTraverseSpecs: AlgorithmSpec[] = [
         (g) =>
           `AOV 网（有向无环图）：${g.n} 个顶点、${g.edges.length} 条有向边；每输出一个顶点，它和它的出边都会从画面上删掉`,
       ),
-    // 首帧由 engine 造，生成器管不到：两块板子（已输出 + 队列）必须第一帧就在，
-    // 不然第一帧下方是空的，第 2 帧才冒出来，「已输出」板子也就不是"每帧都有"了
-    initScene: () => ({
-      boards: [
-        topoOutBoard([]),
-        queueBoard([], { note: '初始化：队列是空的，还没找出入度为 0 的顶点' }),
-      ],
-    }),
+    /*
+     * 首帧由 engine 造，生成器管不到：三块板子（入度表 + 已输出 + 队列）必须**第一帧就在**，
+     * 不然第一帧下方是空的，第 2 帧才冒出来，「入度表」也就不是"每帧都有"了。
+     * 首帧入度表用的是 `graphModel` 算出来的**初始入度**，和 `initTopoView`
+     * 写在黄标签上的那份是同一条规则生成的，所以第一帧就是"表上的数字 == 顶点旁的标签"。
+     */
+    initScene: (data) => {
+      const g = graphModel(clampN(data.length), true)
+      return {
+        boards: [
+          indegBoard(g.allV, Object.fromEntries(g.initIndeg), {
+            note: `初始入度：${g.allV.map((v) => `${v}=${g.initIndeg.get(v)}`).join('，')}`,
+          }),
+          topoOutBoard([]),
+          queueBoard([], { note: '初始化：队列是空的，还没找出入度为 0 的顶点' }),
+        ],
+      }
+    },
     initComment: (data) => {
       const g = graphModel(clampN(data.length), true)
       const indegText = g.allV.map((v) => `${v}=${g.initIndeg.get(v)}`).join('、')
-      return `换成一张**有向无环图**（AOV 网）：${g.n} 个顶点、${g.edges.length} 条有向边（主链 V1->…->V${g.n} 打底，再补 4 条跨层边），顶点表示活动，边 u->v 表示 u 必须先于 v。初始入度 ${indegText}，写在每个顶点旁边 —— 中间几个顶点的入度明显比别人大，除最后的汇点外每个顶点都至少有一条出边。做法是：把入度为 0 的顶点（没有前驱，现在就能做）放进队里，反复弹出一个输出；**每输出一个顶点，它本人和以它为起点的所有出边都会从图上真的消失** —— 图上剩下的就是"还没做完的活动"，顶点坐标全程不动。每删掉一条出边，箭头指向的那个顶点入度减 1，减到 0 就说明它的前驱全做完了，进队等着输出。已经输出的顶点按先后排在图下面那块「已输出（拓扑序）」板子里：输出了几个就有几格，一个都没输出时是块空板子`
+      return `换成一张**有向无环图**（AOV 网）：${g.n} 个顶点、${g.edges.length} 条有向边（主链 V1->…->V${g.n} 打底，再补 4 条跨层边），顶点表示活动，边 u->v 表示 u 必须先于 v。初始入度 ${indegText}，写在每个顶点旁边 —— 中间几个顶点的入度明显比别人大，除最后的汇点外每个顶点都至少有一条出边。做法是：把入度为 0 的顶点（没有前驱，现在就能做）放进队里，反复弹出一个输出；**每输出一个顶点，它本人和以它为起点的所有出边都会从图上真的消失** —— 图上剩下的就是"还没做完的活动"，顶点坐标全程不动。每删掉一条出边，箭头指向的那个顶点入度减 1，减到 0 就说明它的前驱全做完了，进队等着输出。已经输出的顶点按先后排在图下面那块「已输出（拓扑序）」板子里：输出了几个就有几格，一个都没输出时是块空板子。**「已输出」上面那块横排的板子就是入度表**：每个顶点固定占一格，格子里的数字是它**当前**的入度，右下角小字是顶点名 —— 已经输出的那格会**淡掉**，这一步入度刚减到 0、马上要入队的那个格子会**点紫色**，所以"哪一步把谁的入度减掉了"在表上一眼就能看见。入度表每帧都在、格子永远是 n 格，它和顶点旁的黄标签读的是同一份数据，两边永远一样`
     },
     createRunner: runTopo,
   },

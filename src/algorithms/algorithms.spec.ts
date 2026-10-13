@@ -1220,3 +1220,195 @@ describe('场景类渲染器的校验规则', () => {
     expect(() => validateSteps(steps, code, [1], 'scene')).not.toThrow()
   })
 })
+
+/**
+ * 拓扑排序的「入度表」板子。
+ *
+ * 这块板子每个顶点固定占一格，所以"某一步把谁的入度减了 1"就是"某一格里的数字掉了 1"，
+ * 一眼能看见；顶点旁的黄标签是**同一个值的另一种呈现**。于是它有两件必须守住的事：
+ *   ① 每帧都在、格子数永远等于顶点数（它是"每帧都给"的常驻板子，不能有一帧少一块）；
+ *   ② 表里的数字和同一帧的黄标签**逐个一致** —— 一旦有人写了两套计算，这里当场就能抓出来。
+ * 规模 5..9 全跑一遍，不是只看默认那一档。
+ */
+describe('拓扑排序：入度表板子', () => {
+  const spec = getAlgorithm('graph-topo')
+  const sizes = spec.sizes ?? [7]
+  const dataOf = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
+  const V = (i: number) => `V${i}`
+
+  /**
+   * 测试里**自己**按"主链 V1->…->Vn + 4 条跨层边"的规则数一遍初始入度，
+   * 不引用被测代码的实现：实现万一把边改错了（比如最后那条写成 V(n-3)->Vn），这里立刻对不上。
+   */
+  const expectedInitIndeg = (n: number): Record<string, number> => {
+    const edges: Array<[string, string]> = []
+    for (let i = 2; i <= n; i++) edges.push([V(i - 1), V(i)])
+    edges.push([V(1), V(3)], [V(2), V(4)], [V(1), V(4)], [V(n - 2), V(n)])
+    const indeg: Record<string, number> = {}
+    for (let i = 1; i <= n; i++) indeg[V(i)] = 0
+    for (const [, to] of edges) indeg[to] = (indeg[to] ?? 0) + 1
+    return indeg
+  }
+
+  /** 这一帧的「入度表」板子（找不到返回 undefined，断言里会当场报出来） */
+  const indegBoardOf = (step: AlgoStep) =>
+    (step.boards ?? []).find((b) => b.title.startsWith('入度表'))
+
+  /** 把入度表读成 顶点名 -> 入度（**格子的正文是入度，右下角小字才是顶点名**） */
+  const tableOf = (step: AlgoStep): Record<string, number> => {
+    const board = indegBoardOf(step)
+    if (!board) throw new Error('这一帧没有「入度表」板子')
+    return Object.fromEntries(
+      board.items.map((it) => [it.sub!, Number(it.text)] as [string, number]),
+    )
+  }
+
+  /** 把顶点旁的黄标签读成 顶点名 -> 入度（标签形如 `入度1`，把"入度"两个字剥掉） */
+  const badgesOf = (step: AlgoStep): Record<string, number> =>
+    Object.fromEntries(
+      Object.entries(step.graph?.badges ?? {}).map(
+        ([v, text]) => [v, Number(text.replace(/^入度/, ''))] as [string, number],
+      ),
+    )
+
+  /** 这一帧已经输出过的顶点（「已输出」板子上的格子就是答案本身） */
+  const outOf = (step: AlgoStep): string[] =>
+    (step.boards ?? [])
+      .find((b) => b.title.startsWith('已输出'))
+      ?.items.map((it) => it.text) ?? []
+
+  it('每一帧都挂着三块板子：入度表 / 已输出 / 队列', () => {
+    let frames = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, dataOf(n), {})
+      // 守卫：帧数太少说明这个规模根本没跑起来，下面的循环会静默空跑
+      // （实际帧数 1 + 1 + 1 + Σ(3 + 出度) + 1：n=5 是 27 帧、n=9 是 43 帧）
+      expect(steps.length, `${n} 个顶点的帧数`).toBeGreaterThan(20)
+      for (const [i, step] of steps.entries()) {
+        const titles = (step.boards ?? []).map((b) => b.title)
+        expect(titles.length, `${n} 个顶点第 ${i} 帧的板子数`).toBe(3)
+        expect(titles[0], `${n} 个顶点第 ${i} 帧第 1 块板子`).toMatch(/^入度表/)
+        expect(titles[1], `${n} 个顶点第 ${i} 帧第 2 块板子`).toMatch(/^已输出/)
+        expect(titles[2], `${n} 个顶点第 ${i} 帧第 3 块板子`).toMatch(/^队列/)
+        frames += 1
+      }
+    }
+    expect(frames, '总共核对过的帧数').toBeGreaterThan(150)
+  })
+
+  it('入度表每一帧都恰好 n 格，顶点名一个不多一个不少', () => {
+    let checked = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, dataOf(n), {})
+      for (const [i, step] of steps.entries()) {
+        const board = indegBoardOf(step)
+        expect(board, `${n} 个顶点第 ${i} 帧要有入度表`).toBeTruthy()
+        expect(board!.layout, `${n} 个顶点第 ${i} 帧的布局`).toBe('row')
+        expect(board!.items.length, `${n} 个顶点第 ${i} 帧的格子数`).toBe(n)
+        expect(
+          board!.items.map((it) => it.sub),
+          `${n} 个顶点第 ${i} 帧的顶点名（顺序也该是 V1..Vn）`,
+        ).toEqual(Array.from({ length: n }, (_, k) => V(k + 1)))
+        checked += 1
+      }
+    }
+    expect(checked, '总共核对过的入度表张数').toBeGreaterThan(150)
+  })
+
+  it('入度表里的数字和同一帧的黄标签逐个一致（同一份数据派生）', () => {
+    let pairs = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, dataOf(n), {})
+      for (const [i, step] of steps.entries()) {
+        const table = tableOf(step)
+        const badges = badgesOf(step)
+        // 黄标签只挂在**还没被删掉**的顶点上，所以按标签的 key 逐个比（表是全顶点的）
+        for (const [v, d] of Object.entries(badges)) {
+          expect(table[v], `${n} 个顶点第 ${i} 帧 ${v}：表里 ${table[v]}，标签写 ${d}`).toBe(d)
+          pairs += 1
+        }
+      }
+    }
+    // 守卫：一对都没比过就说明 badges 全是空的，上面那条断言等于没跑
+    expect(pairs, '总共比对过的 (帧, 顶点) 对数').toBeGreaterThan(300)
+  })
+
+  it('入度永远不为负（也不会超过 n-1）', () => {
+    for (const n of sizes) {
+      const steps = buildSteps(spec, dataOf(n), {})
+      for (const [i, step] of steps.entries()) {
+        const table = tableOf(step)
+        const badges = badgesOf(step)
+        for (const [v, d] of [...Object.entries(table), ...Object.entries(badges)]) {
+          expect(d, `${n} 个顶点第 ${i} 帧 ${v} 的入度`).toBeGreaterThanOrEqual(0)
+          expect(d, `${n} 个顶点第 ${i} 帧 ${v} 的入度`).toBeLessThanOrEqual(n - 1)
+        }
+      }
+    }
+  })
+
+  it('已经输出过的顶点在表里必须是 0，而且要淡成 done', () => {
+    let checked = 0
+    for (const n of sizes) {
+      const steps = buildSteps(spec, dataOf(n), {})
+      for (const [i, step] of steps.entries()) {
+        const table = tableOf(step)
+        const toneOf = new Map(indegBoardOf(step)!.items.map((it) => [it.sub, it.tone]))
+        for (const v of outOf(step)) {
+          expect(table[v], `${n} 个顶点第 ${i} 帧：${v} 已经输出了，表里该是 0`).toBe(0)
+          expect(toneOf.get(v), `${n} 个顶点第 ${i} 帧：${v} 已经输出了，该淡成 done`).toBe('done')
+          checked += 1
+        }
+      }
+      // 守卫：收尾帧必须**每个顶点都输出过**，否则上面那个内层循环可能一次都没进
+      const last = steps[steps.length - 1]!
+      expect(outOf(last).length, `${n} 个顶点的收尾帧输出个数`).toBe(n)
+    }
+    expect(checked, '总共核对过的"已输出顶点"个数').toBeGreaterThan(200)
+  })
+
+  it('首帧（含 engine 造的那一帧）的入度表就是这张图的初始入度', () => {
+    for (const n of sizes) {
+      const steps = buildSteps(spec, dataOf(n), {})
+      const expected = expectedInitIndeg(n)
+      // steps[0] 由 engine 从 initScene 造，steps[1] 是生成器的第一帧 —— 两帧都得对
+      for (const i of [0, 1]) {
+        const step = steps[i]!
+        expect(tableOf(step), `${n} 个顶点第 ${i} 帧的入度表`).toEqual(expected)
+        // 首帧的黄标签是同一份数（只是被"入度"两个字包着）
+        expect(badgesOf(step), `${n} 个顶点第 ${i} 帧的黄标签`).toEqual(expected)
+        // note 把初始入度原样报一遍，用户不用自己一个个数格子
+        expect(indegBoardOf(step)!.note, `${n} 个顶点第 ${i} 帧入度表的 note`).toContain('初始入度：V1=0')
+      }
+    }
+  })
+
+  it('入度表的 note 写的就是表上掉下去的那个数字', () => {
+    const steps = buildSteps(spec, dataOf(9), {})
+    let drops = 0
+    for (let i = 1; i < steps.length; i++) {
+      const before = tableOf(steps[i - 1]!)
+      const now = tableOf(steps[i]!)
+      const note = indegBoardOf(steps[i]!)!.note ?? ''
+      // 生成器的第一帧没有"上一帧"可比，note 是"初始入度：…"（上面那条用例已经管了）
+      if (i === 1) {
+        expect(note, '生成器首帧的 note').toContain('初始入度：')
+        expect(now, '生成器首帧和 engine 首帧的入度表该一模一样').toEqual(before)
+        continue
+      }
+      const changed = Object.keys(now).filter((v) => now[v] !== before[v])
+      if (!changed.length) {
+        expect(note, `第 ${i} 帧入度没变，note 却写了`).toBe('这一步入度没有变化')
+        continue
+      }
+      for (const v of changed) {
+        expect(note, `第 ${i} 帧 ${v} 的入度 ${before[v]} -> ${now[v]} 该写在 note 里`).toContain(
+          `${v} 的入度 ${before[v]} -> ${now[v]}`,
+        )
+        drops += 1
+      }
+    }
+    // 默认 9 个顶点有 12 条边 -> 入度正好掉 12 次；写死这个数，note 少写一次就露馅
+    expect(drops, '核对过的"入度掉了 1"次数').toBe(12)
+  })
+})
