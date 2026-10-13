@@ -17,7 +17,15 @@ const { currentStep, currentStepIndex, steps, maxValue, animDuration, sortedIndi
  * 而柱状图只认 `array`。所以这里跟 TreePanel / GraphPanel 一样，
  * 某一帧带了 `boards` 就在下方接一块，柱状图和板子**同时**显示。
  */
-const bottomBoards = computed(() => (currentStep.value?.boards ?? []).filter((b) => b.position !== 'top'))
+/**
+ * 这个算法**任意一帧**有没有下方板子。
+ * 不能直接拿 `bottomBoards.length` 当 v-if：计数排序那种"前几帧有板子、后面几帧没有"的算法，
+ * 板子区一出现一消失，上面的柱状图就被挤得忽高忽低。只要是"这个算法会用到板子区"，
+ * 就从头到尾都留着这一块，高度固定，动画区因此一动不动。
+ */
+const hasBottomBoards = computed(() =>
+  steps.value.some((s) => (s.boards ?? []).some((b) => b.position !== 'top')),
+)
 
 const wrapEl = ref<HTMLDivElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -256,19 +264,19 @@ watch([currentStepIndex, steps], () => {
 </script>
 
 <template>
-  <div class="array-wrap">
+  <div class="array-wrap" :class="{ 'has-boards': hasBottomBoards }">
     <div ref="wrapEl" class="canvas-wrap">
       <canvas ref="canvasEl"></canvas>
     </div>
-    <!-- 计数数组 / 基数排序的桶之类的辅助板子 -->
-    <div v-if="bottomBoards.length" class="boards-slot">
+    <!-- 计数数组 / 基数排序的桶之类的辅助板子：槽位固定，内容超出时在这里内部滚动 -->
+    <div v-if="hasBottomBoards" class="boards-slot">
       <ScenePanel only="bottom" />
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 柱状图 + 下方辅助板子：上下分栏，板子按内容高度自适应 */
+/* 柱状图 + 下方辅助板子：上下分栏，两边高度都是固定的，跟当前帧的内容无关 */
 .array-wrap {
   display: flex;
   flex-direction: column;
@@ -276,14 +284,21 @@ watch([currentStepIndex, steps], () => {
   min-height: 0;
 }
 
+/* 动画区固定占满整个面板（没有板子时）；有板子时固定占 60% —— 见下面的 .has-boards */
 .array-wrap > .canvas-wrap {
-  flex: 1 1 auto;
+  flex: 0 0 100%;
   min-height: 120px;
+}
+
+.array-wrap.has-boards > .canvas-wrap {
+  flex: 0 0 60%;
 }
 
 .boards-slot {
   flex: 0 0 auto;
-  max-height: 46%;
+  /* 固定高度（原来是 max-height: 46% 按内容长，把柱状图挤得上下跳）：
+     这个算法只要有板子就永远占这么多，装不下就在里面滚动 */
+  height: 40%;
   overflow: auto;
   border-top: 1px solid #232a35;
 }

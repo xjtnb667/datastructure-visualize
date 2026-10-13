@@ -18,7 +18,7 @@ import ScenePanel from '@/components/ScenePanel.vue'
  *        这样任意多叉树都不会重叠。
  */
 const store = useAlgorithmStore()
-const { currentStep, currentTree, animDuration } = storeToRefs(store)
+const { currentStep, currentTree, animDuration, steps } = storeToRefs(store)
 
 const NODE_W = 46
 const NODE_H = 40
@@ -33,10 +33,15 @@ const animMs = computed(() => `${animDuration.value}ms`)
  * 非递归遍历光看结点上的小标签说不清"栈里到底存了什么、什么时候压弹"，
  * 所以这些算法额外给一块数组板画栈 / 队列本身，这里把它接在树下面一起显示。
  */
-const boards = computed(() => currentStep.value?.boards ?? [])
-/** 摆在树**上方**的板子（哈夫曼构造的"游离结点池"） */
-const topBoards = computed(() => boards.value.filter((b) => b.position === 'top'))
-const bottomBoards = computed(() => boards.value.filter((b) => b.position !== 'top'))
+/**
+ * 这个算法任意一帧有没有板子，用来决定树上方 / 下方两个槽位留不留。
+ * 直接拿"当前帧的 boards.length"当 v-if 的话，"某几帧有板子、某几帧没有"的算法
+ * （层序遍历、非递归遍历、孩子表示法…）会在板子出现/消失那一帧把树挤一下。
+ */
+const hasTopBoards = computed(() => steps.value.some((s) => (s.boards ?? []).some((b) => b.position === 'top')))
+const hasBottomBoards = computed(() =>
+  steps.value.some((s) => (s.boards ?? []).some((b) => b.position !== 'top')),
+)
 
 /** 一个结点往下连的孩子（二叉树取 left/right，多叉树取 children） */
 function childrenOf(n: TreeNodeSnapshot): string[] {
@@ -275,9 +280,13 @@ const pointerLabels = computed(() => {
 
 <template>
   <div v-if="!tv" class="empty">该算法没有树结构</div>
-  <div v-else class="tree-wrap">
+  <div
+    v-else
+    class="tree-wrap"
+    :class="{ 'has-boards': hasBottomBoards, 'has-top-boards': hasTopBoards }"
+  >
     <!-- 游离结点池之类挂在树上方的东西 -->
-    <div v-if="topBoards.length" class="boards-slot boards-top">
+    <div v-if="hasTopBoards" class="boards-slot boards-top">
       <ScenePanel only="top" />
     </div>
 
@@ -360,7 +369,7 @@ const pointerLabels = computed(() => {
     <p v-if="tv.note" class="tree-note">{{ tv.note }}</p>
 
     <!-- 栈 / 队列 / 存储结构等板子：接在树下面 -->
-    <div v-if="bottomBoards.length" class="boards-slot">
+    <div v-if="hasBottomBoards" class="boards-slot">
       <ScenePanel only="bottom" />
     </div>
   </div>
@@ -375,7 +384,9 @@ const pointerLabels = computed(() => {
 }
 
 .scroller {
-  flex: 1 1 auto;
+  /* 固定占满（没有板子时）；有板子时按下面的 .has-boards / .has-top-boards 固定比例。
+     原来是 flex: 1 1 auto —— 板子一变高就把树挤矮。 */
+  flex: 0 0 100%;
   min-height: 0;
   /* 只允许上下滚动：横向超出靠自动缩放解决，不要出现左右滚动条 */
   overflow-x: hidden;
@@ -383,17 +394,31 @@ const pointerLabels = computed(() => {
   padding: 10px 0;
 }
 
-/* 树上方那块（游离结点池）：分隔线画在下边 */
-.boards-top {
+/* 有下方板子 → 树固定 60%；有上方板子 → 树固定 80%；两个都有 → 树固定 40% */
+.tree-wrap.has-boards > .scroller {
+  flex: 0 0 60%;
+}
+
+.tree-wrap.has-top-boards > .scroller {
+  flex: 0 0 80%;
+}
+
+.tree-wrap.has-top-boards.has-boards > .scroller {
+  flex: 0 0 40%;
+}
+
+/* 树上方那块（游离结点池）：分隔线画在下边，高度固定 20% */
+.boards-slot.boards-top {
+  height: 20%;
   border-top: none;
   border-bottom: 1px solid #232a35;
   padding-bottom: 6px;
 }
 
-/* 树下面的栈 / 队列 / 存储结构板子：按内容高度自适应，最多占 70% 再内部滚动 */
+/* 树下面的栈 / 队列 / 存储结构板子：固定 40%，装不下就在这块里滚动 */
 .boards-slot {
   flex: 0 0 auto;
-  max-height: 70%;
+  height: 40%;
   overflow: auto;
   border-top: 1px solid #232a35;
 }

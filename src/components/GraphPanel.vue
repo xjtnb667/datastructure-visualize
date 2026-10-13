@@ -14,7 +14,7 @@ import ScenePanel from '@/components/ScenePanel.vue'
  * 变化的只有颜色和边上的标注 —— 这样"哪一步动了什么"才好看出来。
  */
 const store = useAlgorithmStore()
-const { currentStep, currentGraph, animDuration } = storeToRefs(store)
+const { currentStep, currentGraph, animDuration, steps } = storeToRefs(store)
 
 const NODE_R = 21
 const PAD = 46
@@ -23,7 +23,13 @@ const gv = computed<GraphView | null>(() => currentGraph.value)
 const animMs = computed(() => `${animDuration.value}ms`)
 const boards = computed(() => currentStep.value?.boards ?? [])
 const topBoards = computed(() => boards.value.filter((b) => b.position === 'top'))
-const bottomBoards = computed(() => boards.value.filter((b) => b.position !== 'top'))
+/**
+ * 这个算法任意一帧有没有下方板子，用来决定"板子区"这个槽位留不留。
+ * 用 `bottomBoards.length` 当 v-if 的话，板子出现/消失的那一帧会把图画布挤一下。
+ */
+const hasBottomBoards = computed(() =>
+  steps.value.some((s) => (s.boards ?? []).some((b) => b.position !== 'top')),
+)
 
 /* 面板尺寸：顶点用相对坐标，得知道画布多大才能换算成像素 */
 const boxEl = ref<HTMLElement | null>(null)
@@ -201,7 +207,7 @@ const badges = computed(() => {
 
 <template>
   <div v-if="!gv" class="empty">该算法没有图结构</div>
-  <div v-else class="graph-wrap">
+  <div v-else class="graph-wrap" :class="{ 'has-boards': hasBottomBoards }">
     <div v-if="topBoards.length" class="boards-slot boards-top">
       <ScenePanel only="top" />
     </div>
@@ -255,7 +261,7 @@ const badges = computed(() => {
 
     <p v-if="gv.note" class="graph-note">{{ gv.note }}</p>
 
-    <div v-if="bottomBoards.length" class="boards-slot">
+    <div v-if="hasBottomBoards" class="boards-slot">
       <ScenePanel only="bottom" />
     </div>
   </div>
@@ -269,9 +275,16 @@ const badges = computed(() => {
   min-height: 0;
 }
 
+/* 有板子的算法：图画布固定 60%、板子区固定 40%，两边都不随帧变 */
+.graph-wrap.has-boards > .canvas {
+  flex: 0 0 60%;
+}
+
 .canvas {
   position: relative;
-  flex: 1 1 auto;
+  /* 固定占满（没有板子时）/ 占 60%（有板子时）—— 见下面的 .has-boards。
+     原来是 flex: 1 1 auto，板子一变高就把图画布挤矮。 */
+  flex: 0 0 100%;
   min-height: 220px;
   overflow: hidden;
 }
@@ -360,7 +373,8 @@ const badges = computed(() => {
 
 .boards-slot {
   flex: 0 0 auto;
-  max-height: 55%;
+  /* 固定 40%（原来是 max-height: 55% 按内容长，会把图画布挤得上下跳），装不下就内部滚动 */
+  height: 40%;
   overflow: auto;
   border-top: 1px solid #232a35;
 }
