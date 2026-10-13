@@ -212,10 +212,20 @@ describe('指针标签的几何：全算法逐帧断言', () => {
     expect(bad.slice(0, 20)).toEqual([])
   })
 
-  it('带指针的板子没有显式 row / col（折行模型成立的前提）', () => {
-    // pointerLabels 按「格子序号 = 第几行第几列」算位置；哈希表那种显式写 row/col 的板子
-    // 一旦也挂上指针，这个前提就破了 —— 那时候要么改模型，要么别挂指针，别悄悄错位。
+  it('带指针的板子：要么不写显式 row / col，写了就必须和"行优先序号"完全一致', () => {
+    /*
+     * pointerLabels 按「格子序号 = 第几行第几列」算位置。所以一块挂了指针的板子只有两种
+     * 合法形态：
+     *   (a) 不写 row/col —— 就走原来的折行模型（矩阵 / DP / 稀疏矩阵全靠它）；
+     *   (b) 写了 row/col，但**逐格都等于行优先序号反推出来的位置**，也就是第 k 格
+     *       恰好是第 floor(k / cols) 行、第 k % cols 列，而且格子稠密、一格不落。
+     *
+     * 基数排序的桶板走的是 (b)：它显式写坐标（桶号占第一行、元素竖着挂），但 items 仍是
+     * 行优先稠密的 10 列网格，所以「当前桶」的格子序号和坐标是同一套，不会悄悄错位。
+     * 哈希表那种"空桶不留格子"的稀疏板子属于写不了坐标的形态 —— 它因此也没有指针。
+     */
     const bad: string[] = []
+    let explicitBoards = 0
     for (const spec of algorithmRegistry) {
       const input = prepared(spec)
       const sizes = spec.sizes ?? [input.length]
@@ -232,14 +242,26 @@ describe('指针标签的几何：全算法逐帧断言', () => {
         for (const [fi, step] of steps.entries()) {
           for (const b of step.boards ?? []) {
             if (!Object.keys(b.pointers ?? {}).length) continue
-            if (b.items.some((it) => it.row !== undefined || it.col !== undefined)) {
-              bad.push(`${spec.id} 帧${fi}: 带指针的板子写了显式 row/col`)
-            }
+            const explicit = b.items.some((it) => it.row !== undefined || it.col !== undefined)
+            if (!explicit) continue
+            explicitBoards += 1
+            const cols = b.cols ?? 1
+            b.items.forEach((it, k) => {
+              const wantRow = Math.floor(k / cols) + 1
+              const wantCol = (k % cols) + 1
+              if (it.row !== wantRow || it.col !== wantCol) {
+                bad.push(
+                  `${spec.id} 帧${fi}: 第 ${k} 格写了 row/col ${it.row}/${it.col}，` +
+                    `但按行优先序号应该是 ${wantRow}/${wantCol} —— 指针会挂到别的格子上`,
+                )
+              }
+            })
           }
         }
       }
     }
     expect(bad.slice(0, 10)).toEqual([])
+    expect(explicitBoards, '守卫：一块"显式写坐标 + 挂指针"的板子都没查到，这条断言等于没跑').toBeGreaterThan(0)
   })
 })
 

@@ -346,26 +346,47 @@ const RADIX_PLACES = ['个位', '十位', '百位', '千位', '万位']
 
 /**
  * 10 个桶画成一块 10 列的格子板：**第 d 列就是 d 号桶**，桶里的元素从上往下按放入顺序摞。
- * 第一行的小字写着桶号，空桶画成虚线格。
+ *
+ * 排布（和哈希表那块板子同一套做法，见 `hashBoard`）：
+ *   第 1 行 —— 10 个桶号（`0号` ~ `9号`），每格 `row: 1, col: d + 1`；
+ *   第 2 行起 —— 元素竖着挂在**自己那个桶号的正下方**（`row: r + 2, col: d + 1`），
+ *               同一列从上到下就是入桶顺序（"桶内先进先出"）。
+ *
+ * 为什么第 1 行**固定 10 格、空桶也留格**：`pointers['当前桶']` 存的是 items 的
+ * 行优先序号（见 `src/core/types.ts` 的 BoardView.pointers）。items 稠密时序号 d
+ * 恰好是"第 1 行第 d+1 列"= d 号桶的桶号格，指针徽章就必然挂在正确的桶上；
+ * 一旦把空桶从 items 里删掉（哈希表那种稀疏写法），序号和行列的对应就断了，
+ * `layoutBoardPointers` 反推出的格子坐标会整体错位，徽章会挂到别的桶上去。
+ * 所以这里**数据稠密**（空位用 `empty: true` 标出来），**显示上空桶不留格子**。
  */
 function radixBucketBoard(
   buckets: number[][],
   opts: { title: string; note: string; hotBucket?: number; hotFrom?: number },
 ): BoardView {
-  const rows = Math.max(1, ...buckets.map((b) => b.length))
+  // 旧版是"第 1 行就是第 1 层数据"；现在第 1 行让给桶号，数据从第 2 行起，
+  // 所以总行数要 +1（0 个元素时也保住第 1 行表头，和旧版的 max(1, ...) 一致）。
+  const rows = Math.max(1, ...buckets.map((b) => b.length)) + 1
   const items: CellItem[] = []
   for (let r = 0; r < rows; r++) {
     for (let d = 0; d < 10; d++) {
-      const v = buckets[d]![r]
+      if (r === 0) {
+        // 桶号单独占第一行：空桶也有桶号格，10 格恒定，列号恒为 1..10
+        items.push({ text: `${d}号`, tone: 'dim', row: 1, col: d + 1 })
+        continue
+      }
+      const v = buckets[d]![r - 1]
+      if (v === undefined) {
+        // 这个桶没有第 r 层数据 —— 占位但**不画格子**（不留虚线空框）
+        items.push({ text: '', empty: true, row: r + 1, col: d + 1 })
+        continue
+      }
       const justIn = opts.hotBucket === d && r >= (opts.hotFrom ?? 0)
-      items.push({
-        text: v === undefined ? '' : String(v),
-        sub: r === 0 ? `${d}号` : '',
-        tone: v === undefined ? 'dim' : justIn ? 'hot' : 'base',
-      })
+      // 元素格不写 sub：列号已经说明它在几号桶里了
+      items.push({ text: String(v), tone: justIn ? 'hot' : 'base', row: r + 1, col: d + 1 })
     }
   }
   const pointers: Record<string, number> = {}
+  // items 是行优先稠密的，所以"第 1 行第 d+1 列"的序号就是 d
   if (opts.hotBucket !== undefined) pointers['当前桶'] = opts.hotBucket
   return { title: opts.title, layout: 'grid', cols: 10, items, pointers, note: opts.note }
 }

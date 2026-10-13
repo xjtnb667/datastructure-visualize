@@ -356,6 +356,7 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
             :style="cellPlace(b, it)"
           >
             <div
+              v-if="!it.empty"
               class="cell"
               :class="{ empty: it.tone === 'dim' }"
               :style="{ background: toneColor(it.tone) }"
