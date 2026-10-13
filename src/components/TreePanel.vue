@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAlgorithmStore } from '@/stores/algorithm'
 import { PALETTE, css, type RGB } from '@/core/palette'
+import { PTR_LANE_H, TREE_PAD, treePtrSeats, treeSeatPad } from '@/core/pointerLabels'
 import type { TreeNodeSnapshot, TreeView } from '@/core/types'
 import ScenePanel from '@/components/ScenePanel.vue'
 
@@ -24,7 +25,14 @@ const NODE_W = 46
 const NODE_H = 40
 const X_STEP = 66
 const Y_STEP = 76
-const PAD = 26
+const PAD = TREE_PAD
+
+/**
+ * 树外面留出的边距。要错层的标签是挂在**结点上方**的，所以每多一个座位就得多留 19px，
+ * 否则根结点上第二个标签会顶出画布（被上边缘裁掉）。
+ * 和 ScenePanel 一样取整条轨迹的最大值 —— 逐帧变化的话整棵树会上下跳。
+ */
+const pad = computed(() => treeSeatPad(steps.value, PAD))
 
 const tv = computed<TreeView | null>(() => currentTree.value)
 const animMs = computed(() => `${animDuration.value}ms`)
@@ -168,11 +176,11 @@ const stepX = computed(() => {
   return Math.max(X_STEP, widest + 20)
 })
 
-const px = (p: Placed) => PAD + p.gx * stepX.value
-const py = (p: Placed) => PAD + p.gy * Y_STEP
+const px = (p: Placed) => pad.value + p.gx * stepX.value
+const py = (p: Placed) => pad.value + p.gy * Y_STEP
 
-const boxW = computed(() => PAD * 2 + (Math.max(0, ...placed.value.map((p) => p.gx)) + 1) * X_STEP)
-const boxH = computed(() => PAD * 2 + (Math.max(0, ...placed.value.map((p) => p.gy)) + 1) * Y_STEP)
+const boxW = computed(() => pad.value * 2 + (Math.max(0, ...placed.value.map((p) => p.gx)) + 1) * X_STEP)
+const boxH = computed(() => pad.value * 2 + (Math.max(0, ...placed.value.map((p) => p.gy)) + 1) * Y_STEP)
 
 /*
  * 整棵树的自动缩放。
@@ -268,11 +276,11 @@ const pointerLabels = computed(() => {
   const t = tv.value
   if (!t) return []
   const out: Array<{ name: string; x: number; y: number }> = []
-  for (const [name, id] of Object.entries(t.pointers ?? {})) {
-    if (!id) continue
-    const p = pos.value.get(id)
+  /* 多个指针落在同一个结点上时按座位号往上错开一层（19px），免得两个标签叠在一起 */
+  for (const s of treePtrSeats(t.pointers)) {
+    const p = pos.value.get(s.id)
     if (!p) continue
-    out.push({ name, x: px(p), y: py(p) - 20 })
+    out.push({ name: s.name, x: px(p), y: py(p) - 20 - s.seat * PTR_LANE_H })
   }
   return out
 })

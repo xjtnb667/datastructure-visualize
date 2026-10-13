@@ -2,6 +2,18 @@
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAlgorithmStore } from '@/stores/algorithm'
+import {
+  layoutBoardPointers,
+  pointerMetrics,
+  PTR_BADGE_PAD,
+  PTR_CELL,
+  PTR_RING_LABEL_R,
+  PTR_RING_R,
+  PTR_RING_SIZE,
+  type BoardPtrLayout,
+  type PlacedPtrLabel,
+  type PointerMetrics,
+} from '@/core/pointerLabels'
 import type { BoardView, CellTone, TapeView } from '@/core/types'
 
 /**
@@ -17,7 +29,7 @@ import type { BoardView, CellTone, TapeView } from '@/core/types'
  * 外加**纸带**用来表示"正在扫描的字符串"（括号匹配、表达式求值）。
  */
 const store = useAlgorithmStore()
-const { currentStep } = storeToRefs(store)
+const { currentStep, steps } = storeToRefs(store)
 
 /**
  * 只渲染指定位置的板子。
@@ -61,29 +73,60 @@ const TONE: Record<CellTone, string> = {  base: '#3f6fd8',
   dim: '#2b323c',
 }
 
-const CELL = 46
-const RING_R = 76
+const CELL = PTR_CELL
+const RING_R = PTR_RING_R
 /** 环形容器边长：要把环外的指针标签也装进去 */
-const RING_SIZE = (RING_R + CELL + 24) * 2
+const RING_SIZE = PTR_RING_SIZE
 
 function toneColor(t?: CellTone): string {
   return TONE[t ?? 'base']
 }
 
-/** 板子上的指针：名字 -> 第几格。反过来按格子分组，好渲染 */
-function pointersAt(b: BoardView): Map<number, string[]> {
-  const m = new Map<number, string[]>()
-  for (const [name, idx] of Object.entries(b.pointers ?? {})) {
-    const arr = m.get(idx) ?? []
-    arr.push(name)
-    m.set(idx, arr)
+/**
+ * 一块板子上的指针标签摆在哪儿 —— 交给纯函数算（`src/core/pointerLabels.ts`）。
+ *
+ * 老做法是纯 CSS（`.ptr-badge { left: 50%; transform: translateX(-50%) }`）：
+ * 只按**自己那一格**居中，既不看自己多宽，也不看隔壁有没有标签。于是：
+ *   - 两个指针指**同一格**（堆排序里 `较大的孩子` 就是 `2i+1` 或 `2i+2` 那一格）
+ *     → 两个标签位置完全相同，字压字；
+ *   - 两个指针指**相邻格**、而标签比格距还宽 → 也叠。
+ * 避让逻辑放在纯函数里，组件只负责照着画；测试就能在 Node 里对全部算法全部帧
+ * 断言"两两不相交、不出板子"，不用开浏览器。
+ *
+ * 每帧的板子对象都是新的，模板里每个格子又要查一次，所以用 WeakMap 缓存一次结果。
+ */
+const ptrLayouts = new WeakMap<BoardView, BoardPtrLayout>()
+function boardLayout(b: BoardView): BoardPtrLayout {
+  let lay = ptrLayouts.get(b)
+  if (!lay) {
+    lay = layoutBoardPointers(b)
+    ptrLayouts.set(b, lay)
   }
-  return m
+  return lay
 }
 
+/** 板子挂在树的上边还是下边（和 boards 的过滤规则保持一致） */
+function boardSide(b: BoardView): 'top' | 'bottom' {
+  return b.position === 'top' ? 'top' : 'bottom'
+}
+
+/**
+ * 整条动画轨迹里指针标签需要的最大留白。
+ * 取**整条轨迹**的最大值而不是当前帧的：板子的内边距逐帧变化的话，
+ * 格子会在"有标签的帧"之间上下跳动。
+ */
+const ptrMetrics = computed<PointerMetrics>(() =>
+  pointerMetrics(steps.value, (b) => (props.only ? boardSide(b) === props.only : true)),
+)
+
 function boardStyle(b: BoardView): Record<string, string> {
-  if (b.layout !== 'grid') return {}
-  return { '--cols': String(b.cols ?? 3) }
+  const style: Record<string, string> = {
+    '--ptr-pad': `${ptrMetrics.value.padTop}px`,
+    '--ptr-rowgap': `${ptrMetrics.value.rowGap}px`,
+    '--ptr-pad-r': `${ptrMetrics.value.padRight}px`,
+  }
+  if (b.layout === 'grid') style['--cols'] = String(b.cols ?? 3)
+  return style
 }
 
 /**
@@ -125,14 +168,29 @@ function ringCellStyle(i: number, n: number): Record<string, string> {
   return { transform: `translate(-50%, -50%) translate(${p.x}px, ${p.y}px)` }
 }
 
-/** 指针标签画在**环形外侧**：画在格子内部的话会被圆周上后面的格子盖住 */
-function ringPtrStyle(i: number, n: number): Record<string, string> {
-  const p = ringPos(i, n, RING_R + 36)
-  return { transform: `translate(-50%, -50%) translate(${p.x}px, ${p.y}px)` }
+/**
+ * 指针标签画在**环形外侧**：画在格子内部的话会被圆周上后面的格子盖住。
+ * 同一格上的多个标签沿着圆周的**切线**错开 —— 再往外挪就顶出环形容器了。
+ */
+function ringPtrStyle(p: PlacedPtrLabel, n: number): Record<string, string> {
+  const at = ringPos(p.idx, n, PTR_RING_LABEL_R)
+  return { transform: `translate(-50%, -50%) translate(${at.x + p.dx}px, ${at.y + p.dy}px)` }
 }
 
-function ringPointers(b: BoardView): Array<{ name: string; idx: number }> {
-  return Object.entries(b.pointers ?? {}).map(([name, idx]) => ({ name, idx }))
+/**
+ * 竖排板子的指针标签：贴在格子右侧，同一格上的多个标签**往下错层**
+ * （往上会滑出板子顶部，往下是板子外面的空白，安全）。
+ */
+function colPtrStyle(p: PlacedPtrLabel, n: number): Record<string, string> {
+  return { top: `${colPtrTop(p.idx, n) + p.dy}px` }
+}
+
+/** 横幅 / 折行板子的指针标签：挂在格子上方，同一格上的多个标签**往上错层** */
+function rowPtrStyle(p: PlacedPtrLabel): Record<string, string> {
+  return {
+    bottom: `calc(100% + ${PTR_BADGE_PAD - p.dy}px)`,
+    transform: `translateX(calc(-50% + ${p.dx}px))`,
+  }
 }
 
 /** 板子上有没有指针标签 —— 有的话横排 / 折行布局要给它留出上方空间 */
@@ -198,7 +256,7 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
         <span class="board-title">{{ b.title }}</span>
 
         <!-- 环形（循环队列） -->
-        <div v-if="b.layout === 'ring'" class="ring" :style="ringBox()">
+        <div v-if="b.layout === 'ring'" class="ring" :style="{ ...ringBox(), ...boardStyle(b) }">
           <span
             v-for="(it, k) in b.items"
             :key="`c${k}`"
@@ -213,10 +271,10 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
           </span>
           <!-- 指针标签单独画在环外，z-index 抬高，免得被圆周上的格子盖住 -->
           <span
-            v-for="p in ringPointers(b)"
+            v-for="p in boardLayout(b).labels"
             :key="`p${p.name}`"
             class="ring-ptr"
-            :style="ringPtrStyle(p.idx, b.items.length)"
+            :style="ringPtrStyle(p, b.items.length)"
           >{{ p.name }}</span>
         </div>
 
@@ -224,7 +282,7 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
           竖排（栈）：格子位置固定，元素做**上下滑动**（进栈从上方滑入、出栈向上滑出）；
           指针单独画一层、按名字作 key，所以"栈顶上移"也是滑上去的。
         -->
-        <div v-else-if="b.layout === 'column'" class="col-board">
+        <div v-else-if="b.layout === 'column'" class="col-board" :style="boardStyle(b)">
           <div class="col-cells">
             <div v-for="(it, k) in b.items" :key="k" class="cell-wrap">
               <div
@@ -246,10 +304,10 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
               </div>
             </div>
             <span
-              v-for="p in ringPointers(b)"
+              v-for="p in boardLayout(b).labels"
               :key="p.name"
               class="col-ptr"
-              :style="{ top: `${colPtrTop(p.idx, b.items.length)}px` }"
+              :style="colPtrStyle(p, b.items.length)"
             >{{ p.name }}</span>
           </div>
         </div>
@@ -315,10 +373,11 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
               </TransitionGroup>
             </div>
             <span
-              v-for="name in pointersAt(b).get(k) ?? []"
-              :key="name"
+              v-for="p in boardLayout(b).byIndex.get(k) ?? []"
+              :key="p.name"
               class="ptr-badge"
-            >{{ name }}</span>
+              :style="rowPtrStyle(p)"
+            >{{ p.name }}</span>
           </div>
         </div>
 
@@ -421,17 +480,21 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
 /*
  * 横排 / 折行的指针标签挂在格子**上方**（bottom: 100% + 4px），
  * 不给它留位置的话，第一行的标签会顶上去压住板子标题。
+ *
+ * 留多高由 --ptr-pad 决定：同一格上有两个指针时要错层，每多一层多留 19px
+ * （见 src/core/pointerLabels.ts 的 ptrPadTopFor）。这个变量按**整条动画轨迹**
+ * 取最大值，所以它逐帧是恒定值，格子不会一格一格地上下跳。
  */
 .grid-box.has-ptr {
-  padding-top: 24px;
+  padding-top: var(--ptr-pad, 24px);
 }
 
 /*
- * 连线层是绝对定位在 top:0 的，上面加了 24px 内边距之后它会跟着错位
- * （箭头整体上移、掉进行与行之间的缝里）。这里让它跟着往下挪 24px 对齐。
+ * 连线层是绝对定位在 top:0 的，上面加了内边距之后它会跟着错位
+ * （箭头整体上移、掉进行与行之间的缝里）。这里让它跟着往下挪，和内边距对齐。
  */
 .grid-box.has-ptr > .links {
-  top: 24px;
+  top: var(--ptr-pad, 24px);
 }
 
 .layout-row {
@@ -458,10 +521,15 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
  * 网格里的指针标签挂在"格子上方 4px"处（见 .ptr-row / .ptr-grid 那段）。
  * 行间距只有 6px，而标签有 17px 高，于是压进了上一行的格子里 ——
  * 十字链表那类带指针的表格上，标签就会盖住上一行的内容。
- * 这里把行间距撑开，标签正好落在两行之间的空档里。
+ * 这里把行间距撑开，标签正好落在两行之间的空档里（两个指针错层时还要再多留）。
  */
 .layout-grid.has-ptr-grid {
-  row-gap: 24px;
+  row-gap: var(--ptr-rowgap, 24px);
+}
+
+/* 横排板子折行以后，第二行的标签同样会压到第一行的格子上，一视同仁撑开 */
+.layout-row.has-ptr {
+  row-gap: var(--ptr-rowgap, 6px);
 }
 
 .links {
@@ -533,8 +601,8 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
 /* ---------- 竖排板子 + 会滑动的指针 ---------- */
 .col-board {
   display: flex;
-  /* 右边留出位置给指针标签，否则会被裁掉 */
-  padding-right: 78px;
+  /* 右边留出位置给指针标签，否则会被裁掉（标签再宽也兜得住，见 pointerLabels 的 padRight） */
+  padding-right: var(--ptr-pad-r, 78px);
 }
 
 .col-cells {
@@ -594,6 +662,11 @@ function linkLine(b: BoardView, l: { from: number; to: number; dir: 'right' | 'd
   white-space: nowrap;
 }
 
+/*
+ * 横排 / 折行的标签默认"挂在本格正上方 4px 处"。
+ * 同一格上有多个指针时，行内的 style 会覆盖 bottom / transform 把标签错层、微调
+ * （位置由 src/core/pointerLabels.ts 算好），这里的值就是"只有一个标签"时的样子。
+ */
 .ptr-row .ptr-badge,
 .ptr-grid .ptr-badge {
   bottom: calc(100% + 4px);
