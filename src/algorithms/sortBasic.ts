@@ -741,36 +741,35 @@ function countBoard(minV: number, counts: number[], hot: number[]): BoardView {
 }
 
 /**
- * 第一趟（找最小值 / 最大值）那块板子：**边扫边数**。
+ * 第一趟（找最小值 / 最大值）那块板子：**只探明数值范围，一个数都还没数**。
  *
- * 和 `countBoard` 的区别，也是这块板子存在的理由 —— 第一趟里"计数数组有多长"还不知道：
- *   - 画的范围是**当前已经扫过的** minV..maxV，随着扫描向左 / 向右扩张，格子一格格长出来
- *     （这正是代码里 `int k = maxV - minV + 1;` 要等到第 7 行才出现的原因，画面如实反映）；
- *   - 还没遇到过的值画成淡显（dim），已经数过的值用 mark（红），当前扫到的这一格用 hot（紫）；
- *   - 每格正文 = 这个值在**已扫过的前缀**里出现过几次，小字 = 数值本身。
- *     期间的值也照样占着格子（dim）而不是被跳过：下标 = 数值，格子一旦错位，
- *     观众就只能靠小字读"这是几"，位置本身就废了。
+ * 这一趟的 C 代码只有 `if (a[i] < minV) minV = a[i]; if (a[i] > maxV) maxV = a[i];`
+ * —— 它既不碰 cnt、也没有任何 `++`。所以这块板子上**每一格正文都是 0，逐帧都不变**：
+ * 它画的不是"数到几个"，而是"以后数数时，哪个值该落在哪一格"。
+ *
+ * ① 格子的数量由 `fullMin..fullMax` 决定，**逐帧恒定** —— 全数组的最小 / 最大值在开跑前
+ *    就是一常量，用它可以只算一次、整趟帧宽一模一样（动画区逐帧高度恒定，盒子不跳）；
+ * ② `[minV, maxV]` 是**代码真实算出来**的东西，每扫一个元素都可能往外扩一格：
+ *    已经进入范围的格子正常显示（base），还没被扫到的值淡显（dim）—— "范围在长"就是
+ *    这一刻被看见的，不是编出来的；当前扫到的 `a[i]` 那一格高亮（hot），是**预告**：
+ *    这个值以后会被数进这一格，这一趟只是在摸它的边界。
+ * ③ 用 `fullMin..fullMax` 当坐标还有个好处：格子下标 = 数值，全程不错位
+ *    （要是每帧按当前范围重排，同一格在不同帧里代表不同的值，位置本身就废了）。
  */
-function scanCountBoard(
-  minV: number,
-  maxV: number,
-  seen: Map<number, number>,
-  hot: number,
-): BoardView {
+function scanCountBoard(minV: number, maxV: number, fullMin: number, fullMax: number, hot: number): BoardView {
   const items: CellItem[] = []
-  for (let v = minV; v <= maxV; v++) {
-    const c = seen.get(v) ?? 0
+  for (let v = fullMin; v <= fullMax; v++) {
     items.push({
-      text: String(c),
+      text: '0', // 这一趟一个都没数：永远是 0
       sub: String(v),
-      tone: v === hot ? 'hot' : c > 0 ? 'mark' : 'dim',
+      tone: v === hot ? 'hot' : v < minV || v > maxV ? 'dim' : 'base',
     })
   }
   return {
-    title: '第一趟边扫边数（小字 = 数值，格子 = 已扫到几个）',
+    title: '第一趟：探明数值范围（小字 = 数值，格子里全是 0：还没开始数数）',
     layout: 'row',
     items,
-    note: `扫到 a[i] = ${hot}，数值 ${hot} 这一格加一；现在扫到 ${minV}..${maxV}，计数数组最终长度要等这一趟扫完才定`,
+    note: `扫到 a[i] = ${hot}：这一格高亮只是预告 —— 它以后会被数进数值 ${hot} 这里；这一趟只是在探明范围、还没开始数数（目前 minV = ${minV}、maxV = ${maxV}）`,
   }
 }
 
@@ -804,7 +803,8 @@ function outBoard(out: Array<number | null>, filled: number, hot: number[]): Boa
  * 注意**第一趟（line 4）也要有画面**：以前它一帧板子都不给，而 CanvasPanel 只要发现
  * "这个算法后面有板子"就会一直留着下方那块板子槽（为了动画区逐帧高度恒定），
  * 于是槽里一直挂着"该算法没有可显示的结构"。现在第一趟同样画两块板子，
- * 计数那块用 `scanCountBoard`：边扫边数、范围随扫描向外长、新扫到的数那一格高亮。
+ * 数值范围那块用 `scanCountBoard` —— **只**画"这一趟探到的范围"：
+ * 格子正文恒为 0（这一趟一个数都没数），范围外淡显、范围内正常、当前扫到的那格高亮。
  */
 export function* countSort(a: number[]): AlgoRunner {
   const n = a.length
@@ -813,9 +813,9 @@ export function* countSort(a: number[]): AlgoRunner {
 
   // 输出数组提前声明：第一趟的板子要连着它一起画（和第 0 帧、后面各帧的板子保持一致）
   const out: Array<number | null> = Array.from({ length: n }, () => null)
-  // 第一趟的"边扫边数"：只用于画板子，`a[0]` 先数进去，之后每扫一个就加一
-  const seen = new Map<number, number>()
-  if (n > 0) seen.set(a[0]!, 1)
+  // 第一趟板子的外框坐标：整个数组的最小 / 最大值是常量，先算一次，整趟帧宽恒定
+  const fullMin = n > 0 ? Math.min(...a) : 0
+  const fullMax = n > 0 ? Math.max(...a) : 0
 
   let minV = a[0]!
   let maxV = a[0]!
@@ -823,15 +823,14 @@ export function* countSort(a: number[]): AlgoRunner {
     const v = a[i]!
     if (v < minV) minV = v
     if (v > maxV) maxV = v
-    seen.set(v, (seen.get(v) ?? 0) + 1)
     yield {
       line: 4,
       action: 'mark',
       array: a,
       indices: [i, 0],
       vars: { i, minV, maxV, n, compares, moves },
-      comment: `第一趟扫描第 ${i} 个元素：a[${i}] = ${v}，于是数值 ${v} 这一格计数加一（目前 ${minV}..${maxV}，最小值 minV = ${minV}、最大值 maxV = ${maxV}）`,
-      boards: [scanCountBoard(minV, maxV, seen, v), outBoard(out, 0, [])],
+      comment: `第一趟扫描第 ${i} 个元素：a[${i}] = ${v}，先和当前的最小值、最大值比一比 —— 于是 minV = ${minV}、maxV = ${maxV}（这一趟只是在探明范围，一个数都还没数）`,
+      boards: [scanCountBoard(minV, maxV, fullMin, fullMax, v), outBoard(out, 0, [])],
     }
   }
 
