@@ -827,7 +827,13 @@ export function* countSort(a: number[]): AlgoRunner {
       line: 4,
       action: 'mark',
       array: a,
-      indices: [i, 0],
+      // 只染正在扫的这个下标。以前这里写的是 `[i, 0]`，那个 0 是硬编码的：
+      // 它来自 line 3 的 `int minV = a[0], maxV = a[0];`，可 line 3 没有自己的帧，
+      // 而这一趟的循环从 i = 1 开始，比较的是 `v` 和 **minV / maxV 这两个数值**
+      // —— 下标 0 只在初始化时被读过一次，之后再没有任何一步碰过它
+      //（例如默认数据扫到 a[4] = 7 后 maxV 来自下标 4，下标 0 已经什么都不是）。
+      // 紫色在图例里是"当前指针"，把它一直染在 0 号柱子上就是在说假话。
+      indices: [i],
       vars: { i, minV, maxV, n, compares, moves },
       comment: `第一趟扫描第 ${i} 个元素：a[${i}] = ${v}，先和当前的最小值、最大值比一比 —— 于是 minV = ${minV}、maxV = ${maxV}（这一趟只是在探明范围，一个数都还没数）`,
       boards: [scanCountBoard(minV, maxV, fullMin, fullMax, v), outBoard(out, 0, [])],

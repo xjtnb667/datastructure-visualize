@@ -89,6 +89,17 @@ describe('计数排序 · 第一趟不能是空屏', () => {
       for (const [k, s] of pass.entries()) {
         const i = Number(s.vars?.i)
         expect(i, `${name} 第一趟第 ${k} 帧没有 i`).toBe(k + 1)
+
+        // ⚠️ 染色下标必须**恰好**是这一帧正在扫的 i。
+        // 老版本这里 yield 的是 `indices: [i, 0]` —— 那个 0 是硬编码的，于是下标 0 那根柱子
+        // 从第 1 帧到第 7 帧一直是紫的（紫色在图例里 =「当前指针」）。可这一趟的 C 代码是
+        // `if (a[i] < minV) minV = a[i]; if (a[i] > maxV) maxV = a[i];`
+        // —— 它比的是 minV / maxV 这两个**数值**，而它们早就可能来自别的下标了
+        //（默认数据扫到 a[4] = 7 后 maxV = 7 来自下标 4，此时下标 0 什么都不是）。
+        // 下标 0 只在 line 3 的 `int minV = a[0], maxV = a[0];` 里被读过一次，而 line 3 没有帧。
+        expect(s.indices, `${name} 第一趟第 ${k} 帧的染色下标不是 [i]`).toEqual([i])
+        expect(s.indices, `${name} 第一趟第 ${k} 帧把下标 0 也染成了"当前指针"`).not.toContain(0)
+
         const v = s.array[i]!
         const board = bottomBoards(s)[0]!
         const hot = board.items.filter((it) => it.tone === 'hot')
