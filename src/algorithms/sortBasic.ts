@@ -200,7 +200,10 @@ const SHELL_CODE = `void shellSort(int a[], int n) {
 
 export const SHELL_CODE_LINES = SHELL_CODE.split('\n')
 
-/** 当前增量 gap 分出来的第 g 组都有哪些下标（画面靠它高亮"整组"） */
+/**
+ * 当前增量 gap 分出来的第 g 组都有哪些下标。
+ * gap > 1 时画面靠它高亮"整组"；gap = 1 时整组就是整条数组（全上色等于没上色），画面不用它。
+ */
 function shellGroup(n: number, gap: number, g: number): number[] {
   const out: number[] = []
   for (let k = g; k < n; k += gap) out.push(k)
@@ -216,13 +219,19 @@ function shellGroup(n: number, gap: number, g: number): number[] {
  *   line 9 -> key 落到同组位置
  *   line 3 -> 本组处理完
  *
- * 画面约定：`indices` 给的是**当前 gap 下的整组下标**，
- * 所以横着看能直接看出"隔 gap 个是一组、组内自己排序"。
+ * 画面约定（`indices` 给谁上色）：
+ *   - gap > 1：给**当前 gap 下的整组下标**。一组只有 2~4 个，横着看正好能看出
+ *     "隔 gap 个是一组、组内自己排序"；
+ *   - gap = 1（最后一趟）：整组就是整条数组，全上色等于没上色，而紫色在图例里是"当前指针"，
+ *     整条数组全紫会让人以为"所有元素都是指针"。所以这一趟改成只给**真正的指针**上色：
+ *     line 4 / line 3 给 i，比较和移动给正在打交道的 j 与 j + gap。
  */
 export function* shellSort(a: number[]): AlgoRunner {
   const n = a.length
   let compares = 0
   let moves = 0
+  /** 上一趟的增量（增量就是分组数），用来在最后一趟说清"分组数怎么从 3 组变成 1 组" */
+  let prevGap: number | null = null
 
   for (let gap = n >> 1; gap > 0; gap = gap >> 1) {
     yield {
@@ -231,20 +240,29 @@ export function* shellSort(a: number[]): AlgoRunner {
       array: a,
       indices: [],
       vars: { gap, n, compares, moves },
-      comment: `增量 gap = ${gap}：把下标相差 ${gap} 的元素看成一组，一共 ${gap} 组，各组先各自直接插入排序`,
+      comment:
+        gap === 1
+          ? prevGap === null
+            ? '增量 gap = 1：分组数 = gap = 1，所以整条数组就是 1 组 —— 这一趟就是普通的直接插入排序'
+            : `增量 gap = 1（最后一趟）：分组数 = gap = 1，所以整条数组就是唯一的一组 —— 分组数从上一趟的 ${prevGap} 组变成了 1 组。这一趟就是普通的直接插入排序；前面几趟已经让数组基本有序，所以它很快`
+          : `增量 gap = ${gap}：把下标相差 ${gap} 的元素看成一组，一共 ${gap} 组（分组数 = gap），各组先各自直接插入排序`,
     }
 
     for (let i = gap; i < n; i++) {
       const g = i % gap
       const group = shellGroup(n, gap, g)
+      /** gap > 1 高亮"当前这一组"；gap = 1 时整组 = 整条数组，改高亮真正的指针 */
+      const whole = gap > 1
       const key = a[i]!
       yield {
         line: 4,
         action: 'mark',
         array: a,
-        indices: group,
+        indices: whole ? group : [i],
         vars: { gap, i, key, n, compares, moves },
-        comment: `第 ${g + 1} 组（下标 ${group.join('、')}）里取出 key = a[${i}] = ${key}，准备在这一组里往前插`,
+        comment: whole
+          ? `第 ${g + 1} 组（下标 ${group.join('、')}）里取出 key = a[${i}] = ${key}，准备在这一组里往前插`
+          : `取出待插入的元素 key = a[${i}] = ${key}（紫色就是指针 i = ${i}），准备往前插进 a[0..${i - 1}] 这个已经有序的区间`,
       }
 
       let j = i - gap
@@ -255,9 +273,11 @@ export function* shellSort(a: number[]): AlgoRunner {
           line: 6,
           action: 'compare',
           array: a,
-          indices: group,
+          indices: whole ? group : [j, j + gap],
           vars: { gap, i, j, key, n, compares, moves },
-          comment: `同组比较：a[${j}] = ${v} > key = ${key}，a[${j}] 要往后挪 ${gap} 位`,
+          comment: whole
+            ? `同组比较：a[${j}] = ${v} > key = ${key}，a[${j}] 要往后挪 ${gap} 位`
+            : `相邻比较：a[${j}] = ${v} > key = ${key}，a[${j}] 要往后挪 1 位`,
         }
         a[j + gap] = v
         moves += 1
@@ -265,9 +285,11 @@ export function* shellSort(a: number[]): AlgoRunner {
           line: 7,
           action: 'set',
           array: a,
-          indices: group,
+          indices: whole ? group : [j, j + gap],
           vars: { gap, i, j, key, n, compares, moves },
-          comment: `把 a[${j}] = ${v} 移到同组的下一个位置 ${j + gap}`,
+          comment: whole
+            ? `把 a[${j}] = ${v} 移到同组的下一个位置 ${j + gap}`
+            : `把 a[${j}] = ${v} 后移一位到位置 ${j + gap}，空出来的位置留给 key`,
         }
         j -= gap
       }
@@ -278,9 +300,11 @@ export function* shellSort(a: number[]): AlgoRunner {
           line: 6,
           action: 'compare',
           array: a,
-          indices: group,
+          indices: whole ? group : [j, j + gap],
           vars: { gap, i, j, key, n, compares, moves },
-          comment: `同组比较：a[${j}] = ${a[j]} ≤ key = ${key}，位置找到了，停止移动`,
+          comment: whole
+            ? `同组比较：a[${j}] = ${a[j]} ≤ key = ${key}，位置找到了，停止移动`
+            : `相邻比较：a[${j}] = ${a[j]} ≤ key = ${key}，位置找到了，停止移动`,
         }
       }
 
@@ -289,20 +313,26 @@ export function* shellSort(a: number[]): AlgoRunner {
         line: 9,
         action: 'set',
         array: a,
-        indices: group,
+        indices: whole ? group : [j + gap],
         vars: { gap, i, key, n, compares, moves },
-        comment: `把 key = ${key} 放到同组位置 ${j + gap}；第 ${g + 1} 组这一段已经有序`,
+        comment: whole
+          ? `把 key = ${key} 放到同组位置 ${j + gap}；第 ${g + 1} 组这一段已经有序`
+          : `把 key = ${key} 放到位置 ${j + gap}，a[0..${j + gap}] 这一段重新有序`,
       }
 
       yield {
         line: 3,
         action: 'mark',
         array: a,
-        indices: group,
+        indices: whole ? group : [i],
         vars: { gap, i, n, compares, moves },
-        comment: `i = ${i} 处理完，第 ${g + 1} 组在下标 ${group.join('、')} 上仍然保持有序`,
+        comment: whole
+          ? `i = ${i} 处理完，第 ${g + 1} 组在下标 ${group.join('、')} 上仍然保持有序`
+          : `i = ${i} 处理完，a[0..${i}] 这一段已经有序`,
       }
     }
+
+    prevGap = gap
   }
 }
 
