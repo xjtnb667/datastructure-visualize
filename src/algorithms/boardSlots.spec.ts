@@ -12,7 +12,7 @@ import type { AlgorithmSpec, AlgoStep, BoardView, RunnerContext } from '@/core/t
  * 于是只要有**一帧**没给这个位置的板子，那一帧的槽里就空着，
  * 露出 ScenePanel 的占位文案「该算法没有可显示的结构」（ScenePanel.vue:225）。
  *
- * 2026-02 修过一批（12 个算法：6 个树遍历/存储结构 + 5 个图算法 + 最佳归并树），
+ * 2026-10 修过一批（12 个算法：6 个树遍历/存储结构 + 5 个图算法 + 最佳归并树），
  * 修法都是"补一块**代码在这一步真的做了的事**的板子"，没有一帧是编的：
  *   - 第 0 帧（engine 造的初始化帧）→ 用 spec.initScene 补初始状态板子；
  *   - sort-optimal-merge 的中间帧 → 补"WPL 还没算"的板子（层数写 —，因为那时真的没有）。
@@ -252,6 +252,85 @@ describe('补过板子的 12 个算法：算法本体一个字节都没动', () 
       expect((steps[0]!.boards ?? []).length).toBeGreaterThan(0)
     })
   }
+})
+
+/**
+ * 第 0 帧的板子**不是编的**：要么和 runner 第一次 yield 的板子逐字段相同
+ *（代码在那一帧确实就是这个状态），要么是它的"前一步"（表格还没写、中转站还没加）。
+ * 下面把这些对应关系也钉成断言 —— 改代码时"板子和代码讲的是不是同一件事"会立刻暴露。
+ */
+describe('第 0 帧的板子：取自代码里同一步的真实状态', () => {
+  const boardsOf = (id: string, frame: number): BoardView[] => {
+    const spec = algorithmRegistry.find((s) => s.id === id)
+    expect(spec, `找不到算法 ${id}`).toBeTruthy()
+    return stepsOf(spec!)[frame]!.boards ?? []
+  }
+  /** 板子骨架（去掉说明文字 note）：title / layout / cols / items / pointers / position */
+  const shape = (bs: BoardView[]): unknown[] =>
+    bs.map(({ note, ...rest }) => {
+      void note
+      return rest
+    })
+
+  for (const id of [
+    'tree-level',
+    'tree-preorder-iter',
+    'tree-inorder-iter',
+    'tree-postorder-iter',
+  ]) {
+    it(`${id}：第 0 帧的板子与第 1 帧（runner 第一次 yield）逐字段相同`, () => {
+      expect(boardsOf(id, 0)).toEqual(boardsOf(id, 1))
+      expect(boardsOf(id, 0).length).toBeGreaterThan(0)
+    })
+  }
+
+  for (const id of ['graph-prim', 'graph-kruskal', 'graph-dijkstra']) {
+    it(`${id}：第 0 帧的板子骨架与 runner 第一帧相同（只有说明文字措辞不同）`, () => {
+      expect(shape(boardsOf(id, 0))).toEqual(shape(boardsOf(id, 1)))
+    })
+  }
+
+  it('tree-parent-repr：第 0 帧 2n 格全空、一个指针都没有（runner 第一帧才有下标 0 那一列）', () => {
+    const b0 = boardsOf('tree-parent-repr', 0)[0]!
+    expect(b0.items).toHaveLength(14)
+    expect(b0.items.filter((it) => it.tone !== 'dim')).toHaveLength(0)
+    expect(Object.keys(b0.pointers ?? {})).toHaveLength(0)
+    const b1 = boardsOf('tree-parent-repr', 1)[0]!
+    // 下标 0 那一列有"数据 + 双亲"两格，所以是 2 格
+    expect(b1.items.filter((it) => it.tone !== 'dim')).toHaveLength(2)
+  })
+
+  it('tree-child-repr：第 0 帧一格都还没建出来（全暗），runner 第一帧才有第 0 行', () => {
+    const b0 = boardsOf('tree-child-repr', 0)[0]!
+    expect(b0.items.filter((it) => it.tone !== 'dim')).toHaveLength(0)
+    const b1 = boardsOf('tree-child-repr', 1)[0]!
+    expect(b1.items.filter((it) => it.tone !== 'dim').length).toBeGreaterThan(0)
+  })
+
+  it('graph-floyd：第 0 帧一个中转站都还没加（没有指针、没有高亮的行列）', () => {
+    const b0 = boardsOf('graph-floyd', 0)[0]!
+    expect(Object.keys(b0.pointers ?? {})).toHaveLength(0)
+    expect(b0.items.filter((it) => it.tone === 'hot')).toHaveLength(0)
+    const b1 = boardsOf('graph-floyd', 1)[0]!
+    expect(Object.keys(b1.pointers ?? {}).length).toBeGreaterThan(0)
+    expect(b1.items.filter((it) => it.tone === 'hot').length).toBeGreaterThan(0)
+  })
+
+  it('graph-critical-path：第 0 帧 vl / e / l 还都没算（— 列 + 没有当前活动指针）', () => {
+    const [vevl, act] = boardsOf('graph-critical-path', 0)
+    expect(Object.keys(vevl!.pointers ?? {})).toHaveLength(0)
+    expect(vevl!.items.filter((it) => it.tone === 'done')).toHaveLength(0)
+    expect(Object.keys(act!.pointers ?? {})).toHaveLength(0)
+    const cols = act!.cols!
+    expect(cols).toBe(7)
+    // 第 0 行是表头，之后每行一条活动：l / l-e / 关键？ 三列都是 —（要等 ve、vl 都求出来）
+    expect(act!.items.length).toBeGreaterThan(cols)
+    for (let r = 1; r * cols < act!.items.length; r++) {
+      expect(act!.items[r * cols + 4]!.text).toBe('—')
+      expect(act!.items[r * cols + 5]!.text).toBe('—')
+      expect(act!.items[r * cols + 6]!.text).toBe('—')
+    }
+  })
 })
 
 describe('sort-optimal-merge 的 WPL 板子：中间帧如实写"还没算"', () => {
