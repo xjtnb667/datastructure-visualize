@@ -1693,6 +1693,32 @@ export const graphPathSpecs: AlgorithmSpec[] = [
         note: `起点 V1 已经在已选集合里（绿色），从它出发的 ${startEdges.length} 条边成了候选边（紫色）`,
       }
     },
+    // 第 0 帧也摆一块 lowcost 板子。这时"① lowcost 全填 ∞、② 起点 lowcost = 0"
+    // 这两步在画面上已经做完了（上面那张图的 V1 就是绿的），所以板子上的数字
+    // 和 runner 第一帧（line 4）完全一样 —— 一个字都不是编的。
+    initScene: (data) => {
+      const g = ug(nOf(data))
+      const start = 1
+      const lowcost = new Array<number>(g.n).fill(INF)
+      lowcost[start - 1] = 0
+      const startEdges = edgesAt(g, start)
+      for (const e of startEdges) lowcost[other(e, start) - 1] = e.w
+      return {
+        boards: [
+          primBoard(
+            g,
+            lowcost,
+            new Set<number>([start]),
+            start,
+            `初始化：还没开始选边。起点 ${V(start)} 已经进了已选集合（绿格），lowcost[${V(
+              start,
+            )}] = 0；从它出发的 ${startEdges.length} 条边是眼下仅有的候选边：${startEdges
+              .map((e) => `${V(start)}-${V(other(e, start))}=${e.w}`)
+              .join('、')}，其余顶点还连不上，lowcost = ∞`,
+          ),
+        ],
+      }
+    },
     createRunner: runPrim,
   },
   {
@@ -1722,6 +1748,25 @@ export const graphPathSpecs: AlgorithmSpec[] = [
         done: [],
         badges: Object.fromEntries(g.ids.map((id, k) => [id, `集合${V(k + 1)}`])),
         note: '每个顶点先各自成一个集合（badge 里的"集合V几"就是它所在集合的代表）',
+      }
+    },
+    // 第 0 帧的两块板子：边表全是"待考察"、并查集是 n 个单点集合。
+    // 这正是代码第 3 行（① 每个顶点先各自成一个集合）执行完的样子，
+    // 和 runner 第一帧 line 3 的两块板子同值 —— 没有一个字是编的。
+    initScene: (data) => {
+      const g = ug(nOf(data))
+      const states: EdgeState[] = g.byW.map(() => 'pending')
+      const dsu = new DSU(g.n)
+      return {
+        boards: [
+          kruskalEdgeBoard(
+            g,
+            states,
+            0,
+            `初始化：还没开始考察任何一条边，${g.byW.length} 条边都是待考察（蓝色）；下面这块板子就是它们按权值排好的考察顺序`,
+          ),
+          dsuBoard(dsu, [], `初始化：每个顶点先各自成一个集合，一共 ${g.n} 个集合`),
+        ],
       }
     },
     createRunner: runKruskal,
@@ -1762,6 +1807,28 @@ export const graphPathSpecs: AlgorithmSpec[] = [
         note: `起点 ${V(start)} 的 dist = 0，其余顶点还没有路走过去，dist 都是 ∞`,
       }
     },
+    // 第 0 帧的 dist 板子：起点 0、其余 ∞、一格都没确定。
+    // 起点和 initGraph / runner 一样由 ctx.target 决定（默认 V1）。
+    initScene: (data, ctx) => {
+      const g = ug(nOf(data))
+      const start =
+        ctx?.target !== undefined && ctx.target >= 1 && ctx.target <= g.n
+          ? Math.floor(ctx.target)
+          : 1
+      const dist = new Array<number>(g.n).fill(INF)
+      dist[start - 1] = 0
+      return {
+        boards: [
+          distBoard(
+            g,
+            dist,
+            new Set<number>(),
+            [start],
+            `初始化：还没开始走。起点 ${V(start)} 自己的 dist = 0，别的顶点都还没走过，一律 ∞；下一步先挑 dist 最小的那个顶点确定下来`,
+          ),
+        ],
+      }
+    },
     createRunner: runDijkstra,
   },
   {
@@ -1789,6 +1856,24 @@ export const graphPathSpecs: AlgorithmSpec[] = [
         done: [],
         badges: Object.fromEntries(g.ids.map((id, k) => [id, `行${D[k]!.map(inf).join('/')}`])),
         note: '顶点旁边的小字是它在矩阵里那一行：起点到各顶点的**直达**距离（∞ 表示没有直接边）',
+      }
+    },
+    // 第 0 帧的距离矩阵：一层中转站都还没加过（k = -1 → 不高亮任何行列，
+    // matrixBoard 的指针对 k 有守卫，所以也不会出现"k=V0"这种不存在的指针）。
+    initScene: (data) => {
+      const g = ug(nOf(data))
+      const D = floydInit(g)
+      return {
+        boards: [
+          matrixBoard(
+            g,
+            D,
+            -1,
+            { i: -1, j: -1 },
+            'hot',
+            `初始化：一轮都还没开始。矩阵里现在是"只走一条边"的距离 —— 自己到自己是 0（对角线），有直接边的照边权填，没有直接边的写 ∞（和上面图上顶点旁边那行小字一致）。接下来第 1 轮把 V1 当中转站`,
+          ),
+        ],
       }
     },
     createRunner: runFloyd,
@@ -1827,6 +1912,35 @@ export const graphPathSpecs: AlgorithmSpec[] = [
         done: [],
         badges: Object.fromEntries(net.ids.map((id, k) => [id, k === 0 ? 've=0' : 've=∞'])),
         note: `V1 源点的 ve = 0（第 0 天开工）；箭头上的数字是活动持续时间，箭头下面是活动名 a1~a${net.acts.length}`,
+      }
+    },
+    // 第 0 帧的两块板子：事件表里 ve 还是数组初值 0、vl 的初值 ∞（小字写 — 表示"还没算"），
+    // 活动表的 e / l / l-e / 关键？ 全部还是 —（要等 ve、vl 都求出来才算）。
+    // 状态和 runner 第一帧（line 3，只有源点 V1 的 ve 定了）不同 —— 因为这一帧连第 ① 步都还没开始。
+    initScene: (data) => {
+      const net = aoe(nOf(data))
+      const ve = new Array<number>(net.n).fill(0)
+      const vl = new Array<number>(net.n).fill(INF)
+      const flag: Array<'pending' | 'cur' | 'critical' | 'normal'> = net.acts.map(() => 'pending')
+      return {
+        boards: [
+          vevlBoard(
+            net,
+            ve,
+            vl,
+            new Set<number>(),
+            0,
+            `初始化：还没开始算。ve 的初值都是 0、vl 的初值都是 ∞（下面小字里的 — 就是"还没算"）；第 ① 步按拓扑序求 ve，源点 V1 的 ve 就是 0`,
+          ),
+          actBoard(
+            net,
+            ve,
+            vl,
+            flag,
+            -1,
+            `初始化：e 和 l 还都没算出来（要先把 ve / vl 求出来，第 ③ 步才算 e、l）。这张表一共 ${net.acts.length} 条活动`,
+          ),
+        ],
       }
     },
     createRunner: runCriticalPath,

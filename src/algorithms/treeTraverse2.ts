@@ -1106,6 +1106,11 @@ export const treeTraverse2Specs: AlgorithmSpec[] = [
     // 结点数就是数据个数：选几个数据就画几个结点
     sizes: TREE_SIZES,
     initTree: (data) => completeTreeView(data, { note: '层次遍历：队列实现，一层一层往下推进' }),
+    // 第 0 帧（engine 造的"初始数据"帧）也要有板子：这时还没开始遍历，
+    // 队列确实是空的 —— 和 runner 第一帧（line 1）画的是同一块"空队列"板子。
+    initScene: (data) => ({
+      boards: [queueBoard([], byIdOf(makeCompleteTree(data)), { act: '初始化：队列还是空的' })],
+    }),
     createRunner: runLevel,
   },
   {
@@ -1121,6 +1126,11 @@ export const treeTraverse2Specs: AlgorithmSpec[] = [
     // 结点数就是数据个数：选几个数据就画几个结点
     sizes: TREE_SIZES,
     initTree: (data) => completeTreeView(data, { note: '先序非递归：用栈模拟递归' }),
+    // 第 0 帧也摆一块"空栈"板子：还没开始遍历，栈确实是空的
+    //（和 runner 第一帧 line 1 的那块一样）
+    initScene: (data) => ({
+      boards: [stackBoard([], byIdOf(makeCompleteTree(data)), { act: '初始化：栈还是空的' })],
+    }),
     createRunner: runPreorderIter,
   },
   {
@@ -1136,6 +1146,10 @@ export const treeTraverse2Specs: AlgorithmSpec[] = [
     // 结点数就是数据个数：选几个数据就画几个结点
     sizes: TREE_SIZES,
     initTree: (data) => completeTreeView(data, { note: '中序非递归：左链压栈 -> 弹栈访问 -> 转右子树' }),
+    // 第 0 帧也摆一块"空栈"板子：p 还没指向任何结点，栈是空的
+    initScene: (data) => ({
+      boards: [stackBoard([], byIdOf(makeCompleteTree(data)), { act: '初始化：p 还没动，栈是空的' })],
+    }),
     createRunner: runInorderIter,
   },
   {
@@ -1152,6 +1166,17 @@ export const treeTraverse2Specs: AlgorithmSpec[] = [
     sizes: TREE_SIZES,
     initTree: (data) =>
       completeTreeView(data, { note: '后序非递归：栈 + last 标记，判断右子树是否已访问' }),
+    // 第 0 帧也摆一块"空栈 + last = 空"板子：还没访问过任何结点
+    initScene: (data) => {
+      const byId = byIdOf(makeCompleteTree(data))
+      return {
+        boards: [
+          stackBoard([], byId, {
+            act: `初始化：栈是空的，last = ${valOf(byId, null)}（还没访问过任何结点）`,
+          }),
+        ],
+      }
+    },
     createRunner: runPostorderIter,
   },
 ]

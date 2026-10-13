@@ -2141,6 +2141,29 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
             note: '双亲表示法：只记双亲下标，找孩子要把整个数组扫一遍',
           })
         : treeView([]),
+    // 第 0 帧也摆一块"连续存储空间"板子：位置按 n 格摆出来、还一格都没写
+    //（runner 的第一帧 line 11 时已经把根结点放到下标 0 了，所以那一帧是 filled = 1）
+    initScene: (data) => {
+      const n = Math.min(data.length, MAX_NODES)
+      if (!n) {
+        const emptyBoard: BoardView = {
+          title: '连续存储空间（空表）',
+          layout: 'grid',
+          cols: 1,
+          items: [{ text: '空', sub: 'n = 0', tone: 'dim' }],
+          note: '没有数据，这片存储空间里一格都没开',
+        }
+        return { boards: [emptyBoard] }
+      }
+      return {
+        boards: [
+          parentReprBoard(data, n, {
+            filled: 0,
+            note: `初始化：还没开始往数组里写。这片连续存储空间按 n = ${n} 个位置摆出来（每格两项：数据 / 双亲下标），眼下每格都是空的；下一步从下标 0 开始，把结点的数据和它双亲的下标逐一填进去`,
+          }),
+        ],
+      }
+    },
     createRunner: runParentRepr,
   },
   {
@@ -2164,6 +2187,32 @@ export const treeThreadForestSpecs: AlgorithmSpec[] = [
             note: '孩子表示法：每个结点挂一条孩子链表；找孩子 O(1)（顺着链表走），找双亲要遍历所有链表',
           })
         : treeView([]),
+    // 第 0 帧也摆一块"顺序表 + 孩子链表"板子：格子按 n 行摆好、一个结点都还没建
+    //（runner 的第一帧 line 14 时已经把根结点建出来了，所以那一帧只有第 0 行是亮的）
+    initScene: (data) => {
+      const n = Math.min(data.length, MAX_NODES)
+      const cs = childLists(PARENT_OF, n)
+      const maxKids = Math.max(0, ...cs.map((kids) => kids.length))
+      if (!n) {
+        const emptyBoard: BoardView = {
+          title: '孩子表示法：顺序表（左列）+ 孩子链表（空表）',
+          layout: 'grid',
+          cols: 1,
+          items: [{ text: '空', sub: 'n = 0', tone: 'dim' }],
+          note: '没有数据，顺序表一格里一个结点都没有，也就没有孩子链表',
+        }
+        return { boards: [emptyBoard] }
+      }
+      const rows: ChildReprRow[] = Array.from({ length: n }, () => ({ exists: false, kids: [] }))
+      return {
+        boards: [
+          childReprBoard(data, rows, {
+            maxKids,
+            note: `初始化：还没开始建表。左列的顺序表按 n = ${n} 格摆出来（每格一项：结点的数据 + 一条孩子链表），右边给孩子最多的结点留了 ${maxKids} 格；现在一格都还没建出来（暗色），下一步从下标 0 开始，先把根结点放进第 0 格`,
+          }),
+        ],
+      }
+    },
     createRunner: runChildRepr,
   },
   {

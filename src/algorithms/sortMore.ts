@@ -1498,6 +1498,28 @@ function optPoolBoard(nodes: OptNode[], pool: string[], hot: string[], note: str
 }
 
 /**
+ * WPL（带权路径长度）板子 —— **还没算出来**的那一版。
+ *
+ * 为什么需要它：WPL 的值只有在 `while (pool.length > 1)` 循环结束、归并树并成
+ * 一棵树之后才算得出来（见 optimalMergeRun 末尾 ⑤ 那段：`walkDepth` 求每段到根的
+ * 层数，再 `wpl += leaf.w * depth`）。在这之前，**层数这个数真的不存在**，所以
+ * 中间帧的这一格只能写 `—`；但段的长度从第 2 行（`lens`）起就是已知的，
+ * 照实列出来 —— 最后那一帧同一格会变成"段长×真实层数"，正好对着看：
+ * 层数是建树过程中一层一层定下来的。
+ *
+ * 格子的个数 = 初始归并段的个数，和最后那一帧的 realLeaves 一样多，
+ * 所以逐帧看过去这块板子不会忽高忽低。
+ */
+function wplPendingBoard(lens: number[]): BoardView {
+  const segs = lens.map((w) => Math.max(0, Math.round(w)))
+  return rowBoard(
+    segs.map((w) => `${w}×—`),
+    '带权路径长度 WPL = Σ(段长 × 层数)',
+    `还没算：每段的长度是定下来的（${segs.join('、')}），"到根的层数"要等归并树只剩一个结点时才数得出来，所以先写 —`,
+  )
+}
+
+/**
  * 最佳归并树（k = 3 路归并）。
  *
  * 各初始归并段的长度不一样，**归并的先后顺序**会决定总读写量：
@@ -1533,6 +1555,7 @@ export function* optimalMergeRun(data: number[]): AlgoRunner {
     }),
     boards: [
       optPoolBoard(nodes, pool, [], `一共 ${n} 个段，长度之和 = ${total}（每个记录都要被读一遍写一遍，总读写量至少是 2 × ${total}）`),
+      wplPendingBoard(lens),
     ],
     comment: `有 ${n} 个初始归并段，长度分别是 [${lens.join(', ')}]，一共 ${total} 个记录。归并时要"每次从当前所有段里挑 ${k} 段合并成一段"：一个记录每往上并一层就要读写一遍，所以**短的段应该多并几层、长的段少并几层**才划算`,
     vars: { n, k, 记录总数: total },
@@ -1563,6 +1586,7 @@ export function* optimalMergeRun(data: number[]): AlgoRunner {
           nodes.filter((x) => x.virtual).map((x) => x.id),
           `严格 ${k} 叉树要求 (叶子数 - 1) 能被 (k - 1) = ${k - 1} 整除，现在 ${n} 个叶子不满足，所以要补虚段`,
         ),
+        wplPendingBoard(lens),
       ],
       comment: `① 严格 ${k} 叉树要求"(叶子数 - 1) % (k - 1) = 0"：这里是 (${n} - 1) % ${k - 1} = ${(n - 1) % (k - 1)} ≠ 0，直接合并的话最后会剩下不足 ${k} 个段凑不成一次合并。所以补 **${virtualCount} 个长度为 0 的虚段**（画成灰色的"虚段"结点，真段下方的小字是"第 i 段"）—— 虚段不占记录，只用来把树补成严格的 ${k} 叉树`,
       vars: { n, k, 虚段个数: virtualCount, 叶子数: pool.length },
@@ -1577,6 +1601,7 @@ export function* optimalMergeRun(data: number[]): AlgoRunner {
       }),
       boards: [
         optPoolBoard(nodes, sorted(pool), [], `(${n} - 1) % ${k - 1} = 0，不用补虚段`),
+        wplPendingBoard(lens),
       ],
       comment: `① (${n} - 1) % (k - 1) = ${(n - 1) % (k - 1)} = 0，${n} 个段刚好能凑成严格的 ${k} 叉树，不用补虚段`,
       vars: { n, k, 虚段个数: 0 },
@@ -1598,7 +1623,10 @@ export function* optimalMergeRun(data: number[]): AlgoRunner {
         pointers: Object.fromEntries(picked.map((id, i) => [`第${i + 1}短`, id])),
         note: `第 ${round} 次合并：挑出最短的 ${k} 段 —— ${pickedW.join('、')}`,
       }),
-      boards: [optPoolBoard(nodes, sorted(pool), picked, `最短的 ${k} 个是 ${pickedW.join('、')}，这次合并它们`)],
+      boards: [
+        optPoolBoard(nodes, sorted(pool), picked, `最短的 ${k} 个是 ${pickedW.join('、')}，这次合并它们`),
+        wplPendingBoard(lens),
+      ],
       comment: `② 第 ${round} 次合并：从 ${pool.length} 个段里挑出**最短的 ${k} 段**：${pickedW.map((w, i) => `${w}（${picked[i]!.startsWith('v') ? '虚段' : `第${picked[i]!.slice(1)}段`}）`).join('、')}。挑最短的先并，它们的层数最多、代价最小`,
       vars: { n, k, 第几次: round, 合并前段数: pool.length, 权值之和: pickedW.reduce((s, w) => s + w, 0) },
     }
@@ -1614,6 +1642,7 @@ export function* optimalMergeRun(data: number[]): AlgoRunner {
       }),
       boards: [
         optPoolBoard(nodes, sorted(pool), picked, `新段长度 = ${pickedW.join(' + ')} = ${sum}`),
+        wplPendingBoard(lens),
       ],
       comment: `③ 合并出来的新段长度 = ${pickedW.join(' + ')} = ${sum}。这次合并要把这 ${sum} 个记录读一遍写一遍；并出来的新段接着当一段参加后面的合并`,
       vars: { n, k, 第几次: round, 新段长度: sum },
@@ -1633,7 +1662,10 @@ export function* optimalMergeRun(data: number[]): AlgoRunner {
         pointers: { 新段: id },
         note: `新段 ${sum} 挂进森林，段数从 ${pool.length + k - 1} 变成 ${pool.length}`,
       }),
-      boards: [optPoolBoard(nodes, sorted(pool), [id], `段数少了 ${k - 1} 个，现在是 ${pool.length} 段`)],
+      boards: [
+        optPoolBoard(nodes, sorted(pool), [id], `段数少了 ${k - 1} 个，现在是 ${pool.length} 段`),
+        wplPendingBoard(lens),
+      ],
       comment: `④ 把被选中的 ${k} 段从集合里删掉、新段 ${sum} 放回去：段数从 ${pool.length + k - 1} 变成 ${pool.length}（每次少 ${k - 1} 段）`,
       vars: { n, k, 第几次: round, 段数: pool.length, 新段长度: sum },
     }
@@ -1701,6 +1733,7 @@ export const optimalMergeSpec: AlgorithmSpec = {
     return {
       boards: [
         optPoolBoard(nodes, nodes.map((x) => x.id), [], `一共 ${data.length} 个段，长度之和 = ${data.reduce((s, w) => s + w, 0)}`),
+        wplPendingBoard(data),
       ],
     }
   },
