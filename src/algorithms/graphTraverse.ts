@@ -362,7 +362,6 @@ function topoOutBoard(out: string[]): BoardView {
     layout: 'row',
     items: out.map((v, i) => ({
       text: v,
-      sub: String(i + 1),
       tone: i === out.length - 1 ? 'hot' : 'done',
     })),
     note: out.length ? `已经输出的顶点，按先后排：${out.join(' → ')}` : '还没输出任何顶点',
@@ -370,7 +369,7 @@ function topoOutBoard(out: string[]): BoardView {
 }
 
 /**
- * 「入度表」板子：**每个顶点固定一格**，格子里的数字是它**当前**的入度，右下角小字是顶点名。
+ * 「入度表」板子：**每个顶点固定一格**，格子里的**正文是顶点名**，下面的小字是它**当前**的入度。
  *
  * 为什么非要这块板子：顶点旁的黄标签写的是同一个数，但图上的顶点会随着输出**一个个真的被删掉**——
  * 删掉之后标签也一起没了，"它入度是多少、清干净没有"就再也看不见了。
@@ -395,8 +394,8 @@ function indegBoard(
     title: `入度表（共 ${allV.length} 个顶点）`,
     layout: 'row',
     items: allV.map((v) => ({
-      text: String(indeg[v] ?? 0),
-      sub: v,
+      text: v,
+      sub: String(indeg[v] ?? 0),
       tone: v === opts.hot ? 'hot' : done.has(v) ? 'done' : 'base',
     })),
     // 不给指针：入度表没有"下一个要处理谁"的语义（那是队列板「队首」的活）

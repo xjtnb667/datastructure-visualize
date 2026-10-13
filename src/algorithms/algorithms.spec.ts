@@ -1254,12 +1254,12 @@ describe('拓扑排序：入度表板子', () => {
   const indegBoardOf = (step: AlgoStep) =>
     (step.boards ?? []).find((b) => b.title.startsWith('入度表'))
 
-  /** 把入度表读成 顶点名 -> 入度（**格子的正文是入度，右下角小字才是顶点名**） */
+  /** 把入度表读成 顶点名 -> 入度（**格子的正文是顶点名，下面的小字才是入度**） */
   const tableOf = (step: AlgoStep): Record<string, number> => {
     const board = indegBoardOf(step)
     if (!board) throw new Error('这一帧没有「入度表」板子')
     return Object.fromEntries(
-      board.items.map((it) => [it.sub!, Number(it.text)] as [string, number]),
+      board.items.map((it) => [it.text, Number(it.sub)] as [string, number]),
     )
   }
 
@@ -1306,7 +1306,7 @@ describe('拓扑排序：入度表板子', () => {
         expect(board!.layout, `${n} 个顶点第 ${i} 帧的布局`).toBe('row')
         expect(board!.items.length, `${n} 个顶点第 ${i} 帧的格子数`).toBe(n)
         expect(
-          board!.items.map((it) => it.sub),
+          board!.items.map((it) => it.text),
           `${n} 个顶点第 ${i} 帧的顶点名（顺序也该是 V1..Vn）`,
         ).toEqual(Array.from({ length: n }, (_, k) => V(k + 1)))
         checked += 1
@@ -1353,7 +1353,7 @@ describe('拓扑排序：入度表板子', () => {
       const steps = buildSteps(spec, dataOf(n), {})
       for (const [i, step] of steps.entries()) {
         const table = tableOf(step)
-        const toneOf = new Map(indegBoardOf(step)!.items.map((it) => [it.sub, it.tone]))
+        const toneOf = new Map(indegBoardOf(step)!.items.map((it) => [it.text, it.tone]))
         for (const v of outOf(step)) {
           expect(table[v], `${n} 个顶点第 ${i} 帧：${v} 已经输出了，表里该是 0`).toBe(0)
           expect(toneOf.get(v), `${n} 个顶点第 ${i} 帧：${v} 已经输出了，该淡成 done`).toBe('done')
