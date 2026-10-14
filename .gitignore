@@ -11,6 +11,10 @@ server/data/
 *.log
 *.tmp
 *.tmpdir
+.tmpbuild/
+
+# 另一个课程实验的交付物（与本仓库无关，不纳入版本管理）
+实验1_最小二乘法房价预测/
 
 # 系统生成
 Thumbs.db
