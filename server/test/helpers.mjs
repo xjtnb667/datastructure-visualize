@@ -31,6 +31,16 @@ export function uniqueName(prefix = 'u') {
 }
 
 /**
+ * 测试用的管理员初始口令。
+ *
+ * `server/auth.mjs` 里**不再写死明文口令**：它优先读 `process.env.ADMIN_PASSWORD`，
+ * 读不到就随机生成一个（随机口令没法让测试确定性地登录）。所以这里必须在
+ * **第一次 `import('../index.mjs')`（它会 import auth.mjs）之前**把环境变量设成
+ * 这个固定值 —— 见下面 `startTestServer()` 开头。口令本身只是测试常量，不是任何真实口令。
+ */
+export const TEST_ADMIN_PASSWORD = 'test-admin-pass'
+
+/**
  * 起一个测试服务器。
  * @returns {Promise<{ app: object, db: any, port: number, url: string, dir: string, dbPath: string,
  *   api: Function, rawRequest: Function, register: Function, login: Function, createAdmin: Function,
@@ -41,6 +51,9 @@ export async function startTestServer() {
   const dbPath = join(dir, 'test.db')
   process.env.DB_PATH = dbPath
   process.env.SERVER_API_LOG = '0' // 关掉"每请求一行"的日志，测试输出才干净
+  // ⚠️ 必须在 import auth.mjs 之前设好：auth.mjs 在模块加载时读它决定管理员初始口令，
+  // 不设就会走"随机生成"分支，下面就没法确定性地登录种子管理员了。
+  process.env.ADMIN_PASSWORD = TEST_ADMIN_PASSWORD
 
   const [{ startServer }, dbModule] = await Promise.all([
     import('../index.mjs'),
@@ -130,8 +143,8 @@ export async function startTestServer() {
     return { ...account, user: res.data }
   }
 
-  // 种子管理员 admin / （已移除的旧口令） 由 ensureAdminSeed() 自动创建，直接登录拿来用
-  const { token: adminToken } = await login('admin', '（已移除的旧口令）')
+  // 种子管理员 admin 由 ensureAdminSeed() 自动创建，口令来自上面设的 ADMIN_PASSWORD
+  const { token: adminToken } = await login('admin', TEST_ADMIN_PASSWORD)
 
   async function close() {
     app.server.closeIdleConnections?.()

@@ -13,7 +13,19 @@ const KEY_LEN = 64
 const SALT_BYTES = 16
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const ADMIN_USERNAME = 'admin'
-export const ADMIN_PASSWORD = '（已移除的旧口令）'
+
+/**
+ * 管理员初始口令的来源（**仓库里不放明文口令**）：
+ * 1. 优先读环境变量 `ADMIN_PASSWORD`（适合脚本化部署与自动化测试）；
+ * 2. 环境变量为空时，进程启动时用 `randomBytes` 随机生成一个 —— 只会在
+ *    "首次建号"那一次打印到控制台，提示登录后立刻修改。随机口令不落任何文件。
+ * 注意：`ADMIN_PASSWORD` 在模块加载时就定下来了，所以**要在 import 本文件之前**
+ * 设好 `process.env.ADMIN_PASSWORD`（测试就是这么保证确定性的）。
+ */
+const ENV_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || ''
+/** true = 本次运行的口令是随机生成的（不是环境变量给的），只在控制台提示时用得上 */
+export const ADMIN_PASSWORD_IS_GENERATED = !ENV_ADMIN_PASSWORD
+export const ADMIN_PASSWORD = ENV_ADMIN_PASSWORD || randomBytes(12).toString('base64url')
 
 /** 带 HTTP 状态码的错误：message 是给用户看的中文说明 */
 export class HttpError extends Error {

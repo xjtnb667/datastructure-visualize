@@ -14,7 +14,12 @@ import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DB_PATH, db, seededAlgorithms } from './db.mjs'
-import { ADMIN_PASSWORD, ADMIN_USERNAME, ensureAdminSeed } from './auth.mjs'
+import {
+  ADMIN_PASSWORD,
+  ADMIN_PASSWORD_IS_GENERATED,
+  ADMIN_USERNAME,
+  ensureAdminSeed,
+} from './auth.mjs'
 import { HttpError, handleApi, sendError } from './api.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -208,7 +213,12 @@ async function main() {
   console.log(
     `  算法元数据 ${seededAlgorithms > 0 ? `本次补齐 ${seededAlgorithms} 条新算法` : '已是最新，无需补齐'}`,
   )
-  if (app.createdAdmin) console.log(`  管理员账号 已创建：${ADMIN_USERNAME} / ${ADMIN_PASSWORD}（请登录后尽快改密码）`)
+  if (app.createdAdmin) {
+    const hint = ADMIN_PASSWORD_IS_GENERATED
+      ? '首次启动生成的管理员口令，请立即登录后修改'
+      : '口令来自环境变量 ADMIN_PASSWORD，请登录后立即修改'
+    console.log(`  管理员账号 已创建：${ADMIN_USERNAME} / ${ADMIN_PASSWORD}（${hint}）`)
+  }
   if (HAS_DIST) {
     console.log(`  前端页面   http://${app.host}:${app.port}/   （已发现 dist/，本端口直接访问）`)
   } else {
