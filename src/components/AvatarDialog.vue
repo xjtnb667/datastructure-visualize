@@ -207,11 +207,6 @@ defineExpose({ open, close, visible })
         <button class="auth-close" type="button" title="关闭（Esc）" @click="close">✕</button>
       </div>
 
-      <p class="auth-hint">
-        选一张图片，会自动居中裁成方形并压缩成 128 × 128 的 JPEG 再上传 ——
-        原图再大也不会把数据库撑大。
-      </p>
-
       <div class="avatar-body">
         <!-- 实时预览：有图就显示图，没有就显示昵称首字（= 顶栏那个占位的样子） -->
         <img v-if="preview" class="avatar-preview" :src="preview" alt="头像预览" />
