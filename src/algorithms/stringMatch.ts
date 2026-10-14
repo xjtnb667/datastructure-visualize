@@ -5,7 +5,7 @@ import type { AlgorithmSpec, AlgoRunner, BoardView, TapeView } from '@/core/type
  *
  * 约定：位置一律用**教材上的 1 基编号**（p[1] 是第一个字符，p[0] 空着不用）。
  * next / nextval 的定义本身就是 1 基的，这样代码、数组、画面上的下标能一一对上，
- * 答辩时照着念不会错位。
+ * 讲解时照着念不会错位。
  *
  * 例子用的是严蔚敏教材里那个经典串：主串 ABABCABCACBAB，模式串 ABCAC，
  * 匹配成功的位置是 6；next = [0,1,1,1,2]，nextval = [0,1,1,0,2]（第 4 位被优化掉了）。
